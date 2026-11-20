@@ -35,7 +35,7 @@ try {
   const desc = settings.describe().find(row => row.ns === 'guoluo');
   assert.equal(desc?.autoGenerate, true);
   const tools = ctx.get('tools');
-  assert.deepEqual(tools.schemas().map(tool => tool.name).filter(name => name.startsWith('guoluo_')).sort(), ['guoluo_dissect', 'guoluo_dossier', 'guoluo_list', 'guoluo_probe', 'guoluo_status', 'guoluo_target_add']);
+  assert.deepEqual(tools.schemas().map(tool => tool.name).filter(name => name.startsWith('guoluo_')).sort(), ['guoluo_dissect', 'guoluo_dossier', 'guoluo_export', 'guoluo_list', 'guoluo_probe', 'guoluo_spec', 'guoluo_status', 'guoluo_target_add', 'guoluo_tokens']);
   const exec = { signal: AbortSignal.timeout(15000) };
   const call = (suffix, args) => tools.get(`guoluo_${suffix}`).execute(args, exec);
   assert.equal((await call('probe', {})).directories.ready, false);
@@ -50,7 +50,13 @@ try {
   const { runId } = await call('dissect', { id });
   const { rows } = await call('dossier', { id, runId, kind: 'token' });
   assert.deepEqual(rows, [{ kind: 'token', path: 'design.css', line: 1, name: '--accent', value: '#112233' }]);
-  console.log(JSON.stringify({ result: 'passed', tools: 6, skill: skill.name, command: command.name, liveSettings: true, rea: probe.rea, rows }));
+  const spec = await call('spec', { id });
+  assert.equal(spec.obligations, 2);
+  const tokens = await call('tokens', { id });
+  assert.equal(tokens.total, 1);
+  const exported = await call('export', { id, format: 'csv' });
+  assert.equal(exported.count, 2);
+  console.log(JSON.stringify({ result: 'passed', tools: 9, skill: skill.name, command: command.name, liveSettings: true, rea: probe.rea, derived: { spec: spec.obligations, tokens: tokens.total, exported: exported.count } }));
 } finally {
   await ctx?.fiber.dispose();
   await rm(root, { recursive: true, force: true });
