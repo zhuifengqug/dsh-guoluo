@@ -168,3 +168,34 @@ test('注册九个工具、技能和命令，读取当前 volatile 配置', asyn
   assert.equal((await command.handler({ rawInput: 'list', ...exec })).kind, 'success');
   assert.equal((await command.handler({ rawInput: 'unknown', ...exec })).kind, 'error');
 });
+
+test('单页证据受序列化字节上限约束，翻页不丢条目', async t => {
+  const { sourceRoot, archiveRoot, service } = await setup(t);
+  await mkdir(join(sourceRoot, 'probe'));
+  await writeFile(join(sourceRoot, 'probe/index.html'), '<!doctype html>');
+  const target = await service.add({ kind: 'local', location: 'probe' });
+  const runId = `${Date.now()}-e0b9b0f0-1111-4222-8333-444455556666`;
+  const rows = Array.from({ length: 40 }, (_, index) => ({ kind: 'reference', path: `app-${index}.html`, line: 1, value: 'x'.repeat(40 * 1024) }));
+  await writeFile(join(archiveRoot, target.id, 'runs', `${runId}.json`), JSON.stringify({
+    schemaVersion: 2, id: target.id, runId, createdAt: new Date().toISOString(), source: '.', meter: { durationMs: 1, rows: rows.length, textBytes: 0, visited: 1 },
+    rea: { status: 'off', reason: '已按要求跳过 REA 分析。' }, rows, totals: { asset: 0, token: 0, navigation: 0, reference: rows.length },
+    coverage: { visited: 1, textBytes: 0, skippedText: 0, skippedLinks: 0, clipped: false, limits: {} }, notes: [],
+  }));
+
+  const collected = [];
+  let offset = 0;
+  let pages = 0;
+  for (;;) {
+    const page = await service.dossier({ id: target.id, runId, limit: 50, offset });
+    assert.ok(page.bytes <= 512 * 1024 + 64 * 1024, `一页超过预算：${page.bytes}`);
+    if (page.clipped) assert.match(page.clipped, /字节上限/u);
+    collected.push(...page.rows);
+    pages += 1;
+    if (page.nextOffset === null) break;
+    assert.ok(page.nextOffset > offset, '翻页必须前进');
+    offset = page.nextOffset;
+  }
+  assert.equal(collected.length, rows.length);
+  assert.ok(pages > 1, '应当分多页取回');
+  assert.equal(new Set(collected.map(row => row.path)).size, rows.length);
+});

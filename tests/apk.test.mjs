@@ -236,9 +236,13 @@ test('APK 清单事实进入复刻规格与缺口', async t => {
   const json = JSON.parse(await readFile(spec.files.json, 'utf8'));
   assert.equal(json.evidence.apk.package, 'com.example.demo');
   assert.equal(json.evidence.apk.launcherActivity, '.MainActivity');
+  assert.equal(json.evidence.apk.manifestStatus, 'parsed');
+  assert.equal(json.evidence.apk.scanTruncated, false);
+  assert.equal(typeof json.evidence.apk.scanned, 'number');
   assert.ok(json.unknowns.some(line => line.includes('APK 只做静态清单解析')));
   const markdown = await readFile(spec.files.markdown, 'utf8');
   assert.match(markdown, /APK 包名 \| com\.example\.demo/u);
+  assert.match(markdown, /APK 清单状态 \| parsed/u);
 });
 
 test('损坏的 ZIP 被拒绝且不留下批次', async t => {

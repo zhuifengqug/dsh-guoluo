@@ -9,7 +9,7 @@ DSH 0.2.2-rc.5 的本地应用资产档案插件。把静态素材整理成可�
 1. `/guoluo probe` 检查配置与 REA CLI。
 2. `guoluo_target_add` 登记 `{ "kind": "local", "location": "my-export" }`。位置相对于素材根；目录、单个 HTML/CSS、Electron `.asar`、Android `.apk`、Godot `.pck`、Windows `.exe`/`.dll`，以及 Unity 的 `global-metadata.dat` 或 `.bundle`/`.unity3d` 都可以。
 3. `guoluo_dissect` 传档案 `id`，返回批次 `runId`、证据数量、覆盖说明、耗时与 REA 绑定结果。目录型素材会自动调用 REA 分析并把摘要绑定到本次素材的路径与根哈希；传 `"rea": false` 可跳过，`reaTimeoutMs` 可覆盖超时。APK、PCK、PE 与 Unity 素材只做静态解析，不触发 REA。
-4. `guoluo_dossier` 传 `id`，可选固定 `runId`、`kind`、`offset`、`limit`。通过 `nextOffset` 翻页。`kind: binary` 分页读 PE 与 Unity 逐文件明细。
+4. `guoluo_dossier` 传 `id`，可选固定 `runId`、`kind`、`offset`、`limit`。通过 `nextOffset` 翻页。`kind: binary` 分页读 PE 与 Unity 逐文件明细。一页最多 50 条且受 512 KiB 序列化上限约束；被截断时 `clipped` 会说明，`nextOffset` 接着往下翻，条目不丢。
 5. `guoluo_spec`、`guoluo_tokens`、`guoluo_export` 把一批证据转成派生产物，默认取最新批次。
 6. `guoluo_check` 核对证据自洽性；传 `visual: { "candidateDirectory": "my-rebuild" }` 时再用 REA 比较基准与候选的三档视口（390 / 768 / 1440 宽，900 高），把「像不像」量化成变化像素比例。
 7. `/guoluo list` 列档案，`/guoluo status <id>` 看状态；也可用 `guoluo_list`、`guoluo_status`。
