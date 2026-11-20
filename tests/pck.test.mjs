@@ -1,52 +1,56 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { Config } from '../index.js';
 import { readPck } from '../lib/pck.mjs';
 import { projectService } from '../lib/projects.mjs';
 
 const MAGIC = 0x43504447;
 
-function buildPck({ formatVersion = 2, major = 4, minor = 2, patch = 1, packFlags = 0, fileBase = 0n, relative = false, skipData = false, entries = [
+function buildPck({ formatVersion = 2, major = 4, minor = 2, patch = 1, packFlags = 0, skipData = false, entries = [
   { path: 'icon.png', size: 4 },
   { path: 'scenes/main.tscn', size: 8 },
   { path: 'audio/theme.ogg', size: 2 },
 ] } = {}) {
-  const entryLength = entries.reduce((sum, entry) => sum + 4 + Buffer.byteLength(entry.path) + ((4 - (Buffer.byteLength(entry.path) % 4)) % 4) + 8 + 8 + 16 + (formatVersion === 2 ? 4 : 0), 0);
-  const headerLength = formatVersion === 2 ? 8 + 12 + 64 + 4 + 8 + 4 : 8 + 12 + 64 + 4;
-  const dataStart = headerLength + entryLength;
-  const parts = [];
-  const head = Buffer.alloc(headerLength);
+  const modern = formatVersion >= 2;
+  const tailDirectory = formatVersion >= 3;
+  const head = Buffer.alloc(tailDirectory ? 104 : modern ? 96 : 84);
   head.writeUInt32LE(MAGIC, 0);
   head.writeUInt32LE(formatVersion, 4);
   head.writeUInt32LE(major, 8);
   head.writeUInt32LE(minor, 12);
   head.writeUInt32LE(patch, 16);
-  let at = 20 + 64;
-  if (formatVersion === 2) {
-    head.writeUInt32LE(packFlags, at);
-    head.writeBigUInt64LE(fileBase, at + 4);
-    at += 12;
-  }
-  head.writeUInt32LE(entries.length, at);
-  parts.push(head);
-  let cursor = dataStart;
-  for (const entry of entries) {
-    const name = Buffer.from(entry.path, 'utf8');
-    const pad = (4 - (name.length % 4)) % 4;
-    const block = Buffer.alloc(4 + name.length + pad + 8 + 8 + 16 + (formatVersion === 2 ? 4 : 0));
-    block.writeUInt32LE(name.length, 0);
+  const blocks = entries.map(({ path }) => {
+    const name = Buffer.from(path);
+    const fieldLength = modern ? Math.ceil(name.length / 4) * 4 : name.length;
+    const block = Buffer.alloc(4 + fieldLength + (modern ? 36 : 32));
+    block.writeUInt32LE(fieldLength);
     name.copy(block, 4);
-    block.writeBigUInt64LE(relative ? 0n : BigInt(cursor), 4 + name.length + pad);
-    block.writeBigUInt64LE(BigInt(entry.size), 4 + name.length + pad + 8);
-    if (formatVersion === 2) block.writeUInt32LE(entry.flags ?? 0, block.length - 4);
-    parts.push(block);
-    cursor += entry.size;
+    return block;
+  });
+  const count = Buffer.alloc(4);
+  count.writeUInt32LE(entries.length);
+  const dataSize = entries.reduce((sum, entry) => sum + entry.size, 0);
+  const dataStart = tailDirectory ? head.length : head.length + 4 + blocks.reduce((sum, block) => sum + block.length, 0);
+  const fileBase = modern ? dataStart : 0;
+  if (modern) {
+    head.writeUInt32LE(packFlags, 20);
+    head.writeBigUInt64LE(BigInt(fileBase), 24);
   }
-  if (!skipData) parts.push(Buffer.alloc(cursor - dataStart));
-  return Buffer.concat(parts);
+  if (tailDirectory) head.writeBigUInt64LE(BigInt(dataStart + dataSize), 32);
+  let position = dataStart;
+  for (const [i, block] of blocks.entries()) {
+    const offset = 4 + block.readUInt32LE();
+    block.writeBigUInt64LE(BigInt(position - fileBase), offset);
+    block.writeBigUInt64LE(BigInt(entries[i].size), offset + 8);
+    if (modern) block.writeUInt32LE(entries[i].flags ?? 0, offset + 32);
+    position += entries[i].size;
+  }
+  const data = Buffer.alloc(skipData ? 0 : dataSize);
+  return Buffer.concat(tailDirectory ? [head, data, count, ...blocks] : [head, count, ...blocks, data]);
 }
 
 async function temp(t, bytes, name = 'game.pck') {
@@ -77,11 +81,12 @@ test('PCK 包格式 1 与相对文件基址', async t => {
   assert.equal(facts.packFormat, 1);
   assert.equal(facts.engine, 'Godot 3.5.2');
   assert.equal(facts.files[0].path, 'icon.png');
-  const relativized = buildPck({ packFlags: 2, fileBase: 260n, relative: true });
-  const two = await temp(t, relativized, 'rel.pck');
-  const relativeFacts = await readPck(two.file, relativized.length, {});
-  assert.equal(relativeFacts.files[0].offset, 260);
-  assert.equal(relativeFacts.fileBase, '260');
+  const v2 = buildPck({ packFlags: 0 });
+  const two = await temp(t, v2, 'relative.pck');
+  const relativeFacts = await readPck(two.file, v2.length, {});
+  assert.equal(relativeFacts.files[0].offset, v2.length - 14);
+  assert.equal(relativeFacts.fileBase, String(v2.length - 14));
+  assert.equal(relativeFacts.files[1].offset, v2.length - 10);
 });
 
 test('PCK 拒绝坏标识、未知格式、越界条目与非法路径', async t => {
@@ -89,7 +94,7 @@ test('PCK 拒绝坏标识、未知格式、越界条目与非法路径', async t
   const magicFile = await temp(t, badMagic, 'bad.pck');
   await assert.rejects(readPck(magicFile.file, 32, {}), /PCK 头标识无效/u);
   const unknown = buildPck({ formatVersion: 2 });
-  unknown.writeUInt32LE(3, 4);
+  unknown.writeUInt32LE(5, 4);
   const unknownFile = await temp(t, unknown, 'v3.pck');
   await assert.rejects(readPck(unknownFile.file, unknown.length, {}), /暂不支持/u);
   const overflow = buildPck({ skipData: true, entries: [{ path: 'big.png', size: 4096 }] });
@@ -120,4 +125,19 @@ test('PCK 盘点把条目登记为归档素材并写入规格与 mock 说明', a
   const mock = await service.mock({ id: target.id, runId: run.runId });
   const mockConfig = JSON.parse(await readFile(mock.files.config, 'utf8'));
   assert.ok(mockConfig.unreplayed.some(item => item.value === 'icon.png' && /PCK 归档成员/u.test(item.reason)));
+});
+
+test('原生 Godot 4.7.2 导出的包格式 4 被如实读出', async () => {
+  const path = fileURLToPath(new URL('./fixtures/godot-4.7.2.pck', import.meta.url));
+  const { size } = await stat(path);
+  const pck = await readPck(path, size);
+  // 这份包由引擎自带 PCKPacker 生成，不经本仓库夹具；数值与引擎写出的头部直接对应。
+  assert.equal(pck.packFormat, 4);
+  assert.equal(pck.engine, 'Godot 4.7.2');
+  assert.equal(pck.packFlags, 2);
+  assert.equal(pck.fileBase, '128');
+  assert.equal(pck.directoryStatus, 'parsed');
+  assert.deepEqual(pck.counts, { entries: 1, encrypted: 0, directories: 0, scenes: 0, scripts: 0, resources: 0, removed: 0, delta: 0 });
+  assert.equal(pck.declaredBytes, '5');
+  assert.deepEqual(pck.files, [{ path: 'ok.txt', bytes: 5, offset: 128, encrypted: false, ext: 'txt' }]);
 });

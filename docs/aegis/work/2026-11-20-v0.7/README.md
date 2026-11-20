@@ -1,5 +1,7 @@
 # v0.7.0 — Godot PCK 离线静态盘点
 
+> **已被 v0.8 更正。** 本记录里「按顺序游标读 PCK 头（…保留区；format 2 追加 `packFlags` 与 `fileBase`）」的顺序与引擎实际布局不符：`pack_flags`/`file_base` 在保留区**之前**，v3/v4 还有 `dir_offset`，且 v2 起路径长度已含补零。当时的测试夹具复刻了同一错误布局，所以测试全绿也没暴露。以 `docs/aegis/work/2026-11-21-v0.8/README.md` 与 `lib/pck.mjs` 的实际实现为准。
+
 ## 目标
 
 让 `guoluo_dissect` 接受 `.pck`，把 Godot 导出的资源包读成可回查的证据：包格式、引擎版本、条目清单、加密标记、场景/脚本/资源计数，并进入 spec 与 mock 的说明面。不解压条目内容、不解密加密条目、不运行游戏。
