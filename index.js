@@ -9,6 +9,7 @@ export const Config = Schema.object({
   sourceRoot: pathSetting('素材根：已存在的本地素材目录（绝对路径）'),
   archiveRoot: pathSetting('档案根：单独的已存在输出目录（绝对路径）'),
   reaPath: pathSetting('REA 启动器绝对路径；留空则从 PATH 查找'),
+  chromiumPath: pathSetting('视觉核对用 Chromium 可执行文件绝对路径；留空使用已安装的 Chrome'),
   reaTimeoutMs: Schema.number().default(180000).description('REA 自动分析超时（毫秒，10000–1800000）').extra('volatile', true),
 }).description('虫珀·蜾蠃');
 
@@ -41,7 +42,12 @@ export function apply(ctx, config = {}) {
   add('tokens', '导出设计令牌：tokens.css、Tailwind v4 主题片段和机器可读清单。写到档案的 tokens/ 目录。', { id, runId: string(50) }, ['id'], projects.tokens);
   add('export', '导出资产清单到档案的 export/ 目录，可选 json、markdown、csv。', { id, runId: string(50), format: { type: 'string', enum: ['json', 'markdown', 'csv'] }, kind: enumeration('asset', 'token', 'navigation', 'reference') }, ['id'], projects.export);
   add('mock', '按本批证据生成零依赖 mock 服务：静态链接回占位页，素材按素材根回放。只生成，不代为启动。', { id, runId: string(50), port: { type: 'integer', minimum: 1024, maximum: 65535 } }, ['id'], projects.mock);
-  add('check', '核对复刻义务与证据是否互相对齐：漏项、悬空证据、与已落盘规格的偏差。fail-closed。', { id, runId: string(50) }, ['id'], projects.check);
+  add('check', '核对复刻义务与证据的自洽性；显式给出 visual 时，再用 REA 比较两份本地静态页面的三档视口，结果独立呈报。', {
+    id, runId: string(50), visual: { type: 'object', properties: {
+      candidateDirectory: string(500), baselineEntry: string(500), candidateEntry: string(500),
+      channelThreshold: { type: 'integer', minimum: 0, maximum: 255 },
+    }, required: ['candidateDirectory'], additionalProperties: false },
+  }, ['id'], projects.check, 210000);
   add('list', '列出已登记的蜾蠃档案。', { offset, limit }, [], projects.list);
   add('status', '查看某个档案最近的盘点和批次数。', { id }, ['id'], projects.status);
   const skill = readFileSync(new URL('./skills/guoluo-rebuild/SKILL.md', import.meta.url), 'utf8');
