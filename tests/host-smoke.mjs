@@ -8,6 +8,32 @@ import { pathToFileURL } from 'node:url';
 
 const [modules, packageDir] = process.argv.slice(2).map(value => resolve(value));
 if (!modules || !packageDir) throw new Error('用法：node tests/host-smoke.mjs <DSH node_modules> <拆包后的 package 目录>');
+const FAKE_REA = String.raw`import { createHash } from 'node:crypto';
+import { readdir, stat, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+const argv = process.argv.slice(2);
+if (argv.includes('--version')) { console.log('9.9.9'); process.exit(0); }
+const target = argv[argv.indexOf('analyze-javascript-application') + 1];
+const output = argv[argv.indexOf('--evidence_output') + 1];
+async function walk(dir, base = '') {
+  const out = [];
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
+    const rel = base ? base + '/' + entry.name : entry.name;
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...(await walk(full, rel)));
+    else out.push(rel + ':' + (await stat(full)).size);
+  }
+  return out.sort();
+}
+const root = createHash('sha256').update((await walk(target)).join('\n')).digest('hex');
+const statistics = { relevant_files: 2, text_bytes_read: 64, parsed_javascript_files: 0, skipped_javascript_files: 0, parse_failures: 0 };
+const parentId = 'ev_' + '1'.repeat(64);
+const viewId = 'ev_' + '2'.repeat(64);
+const text = JSON.stringify({ records: [{ operation: 'analyze_javascript_application', evidence_id: parentId, subject: { local_path: target, digest: { sha256: root } }, normalized_result: { root_artifact_sha256: root, statistics } }] });
+await writeFile(output, text);
+console.log(JSON.stringify({ rea_progress: { terminal: true } }));
+console.log(JSON.stringify({ summary: { evidence_id: viewId, normalized_result: { parent_evidence_id: parentId, artifact: { sha256: root }, summary: { root_artifact_sha256: root, statistics } } }, evidence_bundle: { path: output, bytes: Buffer.byteLength(text, 'utf8') } }));
+`;
 const req = createRequire(join(modules, '..', 'package.json'));
 const { runProfile } = await import(pathToFileURL(join(modules, '@deepseek-ai/dsh/lib/profile-boot.js')));
 const { createLaunchEnvironmentSnapshot } = await import(pathToFileURL(req.resolve('@deepseek-ai/dsh-launch-environment')));
@@ -30,6 +56,8 @@ try {
   await writeFile(join(dir, 'package.json'), JSON.stringify({ name: profile, private: true, dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', packageName] } } }));
   await writeFile(join(dir, 'cordis.patch.yml'), '[]\n');
   await writeFile(join(sourceRoot, 'design.css'), ':root{--accent:#112233}');
+  const fakeRea = join(root, 'fake-rea.mjs');
+  await writeFile(fakeRea, FAKE_REA);
   ({ ctx } = await runProfile({ environment: createLaunchEnvironmentSnapshot([]), profile, patchFiles: [], args: [] }));
   const settings = ctx.get('settings');
   const desc = settings.describe().find(row => row.ns === 'guoluo');
@@ -60,7 +88,17 @@ try {
   assert.equal(mocked.assets, 0);
   const checked = await call('check', { id });
   assert.equal(checked.verdict, 'complete');
-  console.log(JSON.stringify({ result: 'passed', tools: 11, skill: skill.name, command: command.name, liveSettings: true, rea: probe.rea, derived: { spec: spec.obligations, tokens: tokens.total, exported: exported.count, mock: mocked.routes, check: checked.verdict } }));
+  const site = join(sourceRoot, 'site');
+  await mkdir(site);
+  await writeFile(join(site, 'index.html'), '<a href="/docs">docs</a><img src="hero.png">');
+  await writeFile(join(site, 'app.css'), ':root{--accent:#112233}');
+  const desc2 = settings.describe().find(row => row.ns === 'guoluo');
+  await settings.update('guoluo', { reaPath: fakeRea }, desc2.revision);
+  const { id: siteId } = await call('target_add', { kind: 'local', location: 'site' });
+  const siteRun = await call('dissect', { id: siteId });
+  assert.equal(siteRun.rea.status, 'analyzed');
+  assert.equal(siteRun.rea.binding.status, 'verified');
+  console.log(JSON.stringify({ result: 'passed', tools: 11, skill: skill.name, command: command.name, liveSettings: true, rea: probe.rea, linkedRea: siteRun.rea.binding.status, derived: { spec: spec.obligations, tokens: tokens.total, exported: exported.count, mock: mocked.routes, check: checked.verdict } }));
 } finally {
   await ctx?.fiber.dispose();
   await rm(root, { recursive: true, force: true });

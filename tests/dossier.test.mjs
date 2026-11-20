@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, rm, symlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -93,19 +93,60 @@ test('ASAR 只列文件目录，坏归档不产生批次', async t => {
   assert.equal((await service.status({ id: bad.id })).runCount, 0);
 });
 
-test('REA 导入只返回声明指纹和统计，不外发原始内容', async t => {
-  const { sourceRoot, service } = await setup(t);
-  await writeFile(join(sourceRoot, 'theme.css'), ':root{--color:red}');
-  const target = await service.add({ kind: 'local', location: 'theme.css' });
-  const id = `ev_${'a'.repeat(64)}`;
-  await writeFile(join(sourceRoot, 'rea.json'), JSON.stringify({ summary: { evidence_id: id, normalized_result: { parent_operation: 'analyze_javascript_application', parent_evidence_id: id, artifact: { sha256: 'b'.repeat(64), path: 'DISCARD_PATH' }, summary: { statistics: { relevant_files: 2 }, graph: 'DISCARD_GRAPH' } } } }));
-  const run = await service.dissect({ id: target.id, reaSummary: 'rea.json' });
-  assert.equal(run.rea.binding, 'declared-not-verified');
-  assert.equal(run.rea.stats.relevant_files, 2);
-  assert.doesNotMatch(JSON.stringify(run), /DISCARD/u);
-  await writeFile(join(sourceRoot, 'other.json'), '{}');
-  await assert.rejects(service.dissect({ id: target.id, reaSummary: 'other.json' }), /JSON 摘要/u);
+test('REA 自动分析并把摘要绑定到当前素材', async t => {
+  const { root, sourceRoot, archiveRoot } = await setup(t);
+  await mkdir(join(sourceRoot, 'site'));
+  await writeFile(join(sourceRoot, 'site/index.html'), '<!doctype html><script src="./app.js"></script>');
+  await writeFile(join(sourceRoot, 'site/app.js'), 'export const answer = 42');
+  const fakePath = join(root, 'fake-rea.mjs');
+  await writeFile(fakePath, await readFile(new URL('./fixtures/fake-rea.mjs', import.meta.url)));
+  const service = projectService(Config({ sourceRoot, archiveRoot, reaPath: fakePath }));
+  const target = await service.add({ kind: 'local', location: 'site' });
+  const run = await service.dissect({ id: target.id });
+  assert.equal(run.rea.status, 'analyzed');
+  assert.equal(run.rea.version, '9.9.9');
+  assert.equal(run.rea.binding.status, 'verified');
+  assert.ok(run.rea.binding.checks.every(item => item.ok));
+  assert.match(run.rea.artifactSha256, /^[a-f0-9]{64}$/u);
+  assert.equal(run.rea.stats.parsed_javascript_files, 1);
+  assert.equal(run.rea.evidence.path, `rea/${run.runId}/evidence.json`);
+  const off = await service.dissect({ id: target.id, rea: false });
+  assert.equal(off.rea.status, 'off');
 });
+
+test('REA 绑定在证据字节数或根哈希不符时判为 mismatch', async t => {
+  const { root, sourceRoot, archiveRoot } = await setup(t);
+  await mkdir(join(sourceRoot, 'site'));
+  await writeFile(join(sourceRoot, 'site/app.js'), 'export const answer = 42');
+  const fakePath = join(root, 'fake-rea.mjs');
+  await writeFile(fakePath, await readFile(new URL('./fixtures/fake-rea.mjs', import.meta.url)));
+  const service = projectService(Config({ sourceRoot, archiveRoot, reaPath: fakePath }));
+  const target = await service.add({ kind: 'local', location: 'site' });
+  const run = await service.dissect({ id: target.id });
+  const evidencePath = join(archiveRoot, target.id, 'rea', run.runId, 'evidence.json');
+  const original = await readFile(evidencePath, 'utf8');
+  await writeFile(evidencePath, `${original} `);
+  const { verifyBinding } = await import('../lib/rea.mjs');
+  const view = await rebuildView(run, evidencePath, original);
+  const binding = await verifyBinding({ target: join(sourceRoot, 'site'), evidencePath, view });
+  assert.equal(binding.status, 'mismatch');
+  assert.equal(binding.checks.find(item => item.name === 'evidence-bytes').ok, false);
+});
+
+async function rebuildView(run, evidencePath, text) {
+  const parent = JSON.parse(text).records[0];
+  return {
+    summary: {
+      evidence_id: run.rea.evidenceId,
+      normalized_result: {
+        parent_evidence_id: parent.evidence_id,
+        artifact: { sha256: parent.normalized_result.root_artifact_sha256 },
+        summary: { root_artifact_sha256: parent.normalized_result.root_artifact_sha256 },
+      },
+    },
+    evidence_bundle: { path: evidencePath, bytes: Buffer.byteLength(text, 'utf8') },
+  };
+}
 
 test('注册九个工具、技能和命令，读取当前 volatile 配置', async t => {
   const { config } = await setup(t);

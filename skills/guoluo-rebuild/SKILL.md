@@ -1,13 +1,13 @@
 ---
 name: guoluo-rebuild
-description: 使用蜾蠃整理经过导出或准备好的 HTML、CSS、素材目录、Electron ASAR，按证据行产出复刻规格、设计令牌与资产清单。
+description: 使用蜾蠃整理经过导出或准备好的 HTML、CSS、素材目录、Electron ASAR，自动调用 REA 取得并绑定行为侧证据，按证据行产出复刻规格、设计令牌与资产清单。
 ---
 
 # 蜾蠃：素材 → 档案 → 复刻义务
 
 1. 调用 `guoluo_probe` 检查素材根和档案根。REA 未装不影响本地静态盘点。
 2. 用 `guoluo_target_add` 登记素材根内相对路径，`kind` 选 `local`。`kind: url` 只记录出处，不触发采集；已有的本地导出件单独登记。
-3. 用 `guoluo_dissect` 返回批次 ID、数量、范围与局限。只在已给出 REA 静态 JSON 摘要时传 `reaSummary`，该摘要来源单列，未经绑定验证。
+3. 用 `guoluo_dissect` 返回批次 ID、数量、范围、耗时与 REA 绑定结果。目录型素材会自动调用 REA 分析并把摘要绑定到本次素材的路径与根哈希；`rea.status` 为 `analyzed` 且 `rea.binding.status` 为 `verified` 才能采信行为侧证据，`mismatch` 视为无行为侧证据，需要重新采集。单文件、ASAR 与 URL 档案不会触发 REA。
 4. 用 `guoluo_dossier` 指定批次 `runId`，按 `asset`、`token`、`navigation` 或 `reference` 分页；当前页的 `nextOffset` 为 `null` 时结束。资产路径和证据行号引用同一批次。
 5. 需要落到实现时，先 `guoluo_spec` 拿复刻义务账本：每条有编号、证据位置和 `declared` 状态；`conflicts` 里的令牌必须在动工前定值，`unknowns` 里的缺口必须显式处理，不能当作已完成。
 6. 要变量就 `guoluo_tokens`（原样 CSS + Tailwind v4 片段），要清单就 `guoluo_export`（json/markdown/csv）。派生产物可重复生成，每次整份替换，不追加历史。

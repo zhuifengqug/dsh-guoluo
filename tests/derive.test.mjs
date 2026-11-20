@@ -42,7 +42,7 @@ test('规格带证据绑定、缺口和可读文档', async t => {
   assert.equal(result.runId, run.runId);
   assert.ok(result.obligations > 0);
   const spec = JSON.parse(await readFile(join(archiveRoot, id, 'spec/spec.json'), 'utf8'));
-  assert.equal(spec.schemaVersion, 1);
+  assert.equal(spec.schemaVersion, 2);
   assert.equal(spec.runId, run.runId);
   for (const entry of spec.obligations) {
     assert.match(entry.id, /^[A-Z]+-/u);
