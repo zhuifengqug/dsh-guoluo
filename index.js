@@ -39,13 +39,15 @@ export function apply(ctx, config = {}) {
   add('spec', '把一批证据转成复刻义务账本：每条带证据位置，缺口单列。写到档案的 spec/ 目录。', { id, runId: string(50) }, ['id'], projects.spec);
   add('tokens', '导出设计令牌：tokens.css、Tailwind v4 主题片段和机器可读清单。写到档案的 tokens/ 目录。', { id, runId: string(50) }, ['id'], projects.tokens);
   add('export', '导出资产清单到档案的 export/ 目录，可选 json、markdown、csv。', { id, runId: string(50), format: { type: 'string', enum: ['json', 'markdown', 'csv'] }, kind: enumeration('asset', 'token', 'navigation', 'reference') }, ['id'], projects.export);
+  add('mock', '按本批证据生成零依赖 mock 服务：静态链接回占位页，素材按素材根回放。只生成，不代为启动。', { id, runId: string(50), port: { type: 'integer', minimum: 1024, maximum: 65535 } }, ['id'], projects.mock);
+  add('check', '核对复刻义务与证据是否互相对齐：漏项、悬空证据、与已落盘规格的偏差。fail-closed。', { id, runId: string(50) }, ['id'], projects.check);
   add('list', '列出已登记的蜾蠃档案。', { offset, limit }, [], projects.list);
   add('status', '查看某个档案最近的盘点和批次数。', { id }, ['id'], projects.status);
   const skill = readFileSync(new URL('./skills/guoluo-rebuild/SKILL.md', import.meta.url), 'utf8');
   const body = skill.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/u, '');
   ctx.effect(() => ctx.skills.register({ name: 'guoluo-rebuild', description: summary, content: body, source: 'runtime', provider: name }));
   ctx.effect(() => ctx.commands.register({
-    name, description: '蜾蠃：检查配置、列档案、查看盘点状态、派生规格与令牌', input: { hint: 'probe | list | status <id> | spec <id> | tokens <id> | export <id> [json|markdown|csv]' }, recordInput: false,
+    name, description: '蜾蠃：检查配置、列档案、派生规格与令牌、生成 mock、核对覆盖度', input: { hint: 'probe | list | status <id> | spec <id> | tokens <id> | export <id> [json|markdown|csv] | mock <id> | check <id>' }, recordInput: false,
     async handler({ rawInput, signal }) {
       const [verb, target, format, ...rest] = (rawInput ?? '').trim().split(/\s+/u);
       try {
@@ -56,7 +58,9 @@ export function apply(ctx, config = {}) {
         else if (verb === 'spec' && target && !format && !rest.length) result = await projects.spec({ id: target }, signal);
         else if (verb === 'tokens' && target && !format && !rest.length) result = await projects.tokens({ id: target }, signal);
         else if (verb === 'export' && target && !rest.length) result = await projects.export({ id: target, ...(format ? { format } : {}) }, signal);
-        else return { kind: verb ? 'error' : 'success', text: '蜾蠃 · /guoluo probe | list | status <id> | spec <id> | tokens <id> | export <id> [json|markdown|csv]。登记和盘点请用 guoluo_target_add、guoluo_dissect。' };
+        else if (verb === 'mock' && target && !rest.length) result = await projects.mock({ id: target, ...(format ? { port: Number(format) } : {}) }, signal);
+        else if (verb === 'check' && target && !format && !rest.length) result = await projects.check({ id: target }, signal);
+        else return { kind: verb ? 'error' : 'success', text: '蜾蠃 · /guoluo probe | list | status <id> | spec <id> | tokens <id> | export <id> [json|markdown|csv] | mock <id> [port] | check <id>。登记和盘点请用 guoluo_target_add、guoluo_dissect。' };
         return { kind: 'success', text: JSON.stringify(result, null, 2) };
       } catch (error) {
         signal?.throwIfAborted();

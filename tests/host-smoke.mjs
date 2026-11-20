@@ -35,7 +35,7 @@ try {
   const desc = settings.describe().find(row => row.ns === 'guoluo');
   assert.equal(desc?.autoGenerate, true);
   const tools = ctx.get('tools');
-  assert.deepEqual(tools.schemas().map(tool => tool.name).filter(name => name.startsWith('guoluo_')).sort(), ['guoluo_dissect', 'guoluo_dossier', 'guoluo_export', 'guoluo_list', 'guoluo_probe', 'guoluo_spec', 'guoluo_status', 'guoluo_target_add', 'guoluo_tokens']);
+  assert.deepEqual(tools.schemas().map(tool => tool.name).filter(name => name.startsWith('guoluo_')).sort(), ['guoluo_check', 'guoluo_dissect', 'guoluo_dossier', 'guoluo_export', 'guoluo_list', 'guoluo_mock', 'guoluo_probe', 'guoluo_spec', 'guoluo_status', 'guoluo_target_add', 'guoluo_tokens']);
   const exec = { signal: AbortSignal.timeout(15000) };
   const call = (suffix, args) => tools.get(`guoluo_${suffix}`).execute(args, exec);
   assert.equal((await call('probe', {})).directories.ready, false);
@@ -56,7 +56,11 @@ try {
   assert.equal(tokens.total, 1);
   const exported = await call('export', { id, format: 'csv' });
   assert.equal(exported.count, 2);
-  console.log(JSON.stringify({ result: 'passed', tools: 9, skill: skill.name, command: command.name, liveSettings: true, rea: probe.rea, derived: { spec: spec.obligations, tokens: tokens.total, exported: exported.count } }));
+  const mocked = await call('mock', { id, port: 8877 });
+  assert.equal(mocked.assets, 0);
+  const checked = await call('check', { id });
+  assert.equal(checked.verdict, 'complete');
+  console.log(JSON.stringify({ result: 'passed', tools: 11, skill: skill.name, command: command.name, liveSettings: true, rea: probe.rea, derived: { spec: spec.obligations, tokens: tokens.total, exported: exported.count, mock: mocked.routes, check: checked.verdict } }));
 } finally {
   await ctx?.fiber.dispose();
   await rm(root, { recursive: true, force: true });
