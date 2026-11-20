@@ -37,7 +37,7 @@ export function apply(ctx, config = {}) {
   add('probe', '检查蜾蠃目录配置和 REA CLI 版本。', {}, [], (_args, signal) => projects.probe(signal));
   add('target_add', '登记素材根内的相对路径或 URL。URL 只登记；不会联网。', { kind: enumeration('local', 'url'), location: string(1000), label: string(80) }, ['kind', 'location'], projects.add);
   add('dissect', '盘点本地静态素材（目录、HTML/CSS、ASAR、APK、Godot PCK、EXE/DLL），目录型素材会调用 REA 分析 JavaScript 应用；APK、PCK 与 PE 只做静态解析；不运行目标应用。', { id, rea: { type: 'boolean' }, reaTimeoutMs: { type: 'integer', minimum: 10000, maximum: 1800000 } }, ['id'], projects.dissect, 1800000);
-  add('dossier', '分页查看已落盘的证据行，可固定 runId 并筛选种类。', { id, runId: string(50), kind: enumeration('asset', 'token', 'navigation', 'reference'), offset, limit }, ['id'], projects.dossier);
+  add('dossier', '分页查看已落盘的证据行，可固定 runId 并筛选种类；kind=binary 分页读 PE 逐文件明细。', { id, runId: string(50), kind: enumeration('asset', 'token', 'navigation', 'reference', 'binary'), offset, limit }, ['id'], projects.dossier);
   add('spec', '把一批证据转成复刻义务账本：每条带证据位置，缺口单列。写到档案的 spec/ 目录。', { id, runId: string(50) }, ['id'], projects.spec);
   add('tokens', '导出设计令牌：tokens.css、Tailwind v4 主题片段和机器可读清单。写到档案的 tokens/ 目录。', { id, runId: string(50) }, ['id'], projects.tokens);
   add('export', '导出资产清单到档案的 export/ 目录，可选 json、markdown、csv。', { id, runId: string(50), format: { type: 'string', enum: ['json', 'markdown', 'csv'] }, kind: enumeration('asset', 'token', 'navigation', 'reference') }, ['id'], projects.export);

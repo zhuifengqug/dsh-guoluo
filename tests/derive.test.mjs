@@ -88,7 +88,7 @@ test('清单导出三种格式并正确转义', async t => {
   const csv = await service.export({ id, format: 'csv' });
   assert.equal(csv.count > 0, true);
   const text = await readFile(csv.file, 'utf8');
-  assert.match(text, /^kind,path,line,name,value\r\n/u);
+  assert.match(text, /^kind,path,line,name,value,archive\r\n/u);
   assert.match(text, /"""a,b"""/u);
   const scoped = await service.export({ id, format: 'csv', kind: 'navigation' });
   assert.equal(scoped.count, 2);

@@ -155,4 +155,34 @@ test('目录盘点把 PE 登记为二进制资产并写入规格与 mock 说明'
   const mock = await service.mock({ id: target.id, runId: run.runId });
   const mockConfig = JSON.parse(await readFile(mock.files.config, 'utf8'));
   assert.ok(mockConfig.unreplayed.some(item => item.value === 'app.exe' && /原生二进制/u.test(item.reason)));
+  // 工具头部不夹带逐文件明细，明细走 dossier kind=binary 分页。
+  assert.equal(run.pe.files, 1);
+  assert.equal(run.pe.parsed, 1);
+  assert.equal(run.pe.unreadable, 0);
+  assert.equal(Array.isArray(run.pe), false);
+  const binaryRows = await service.dossier({ id: target.id, kind: 'binary', limit: 10 });
+  assert.equal(binaryRows.total, 1);
+  assert.equal(binaryRows.rows[0].path, 'app.exe');
+  assert.equal(binaryRows.rows[0].imports.items[0].dll, 'DEMO.dll');
+});
+
+test('PE 解析失败的尝试同样消耗名额并记录不可读条目', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'guoluo-pe-budget-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const [sourceRoot, archiveRoot] = ['source', 'archive'].map(name => join(root, name));
+  await Promise.all([mkdir(sourceRoot), mkdir(archiveRoot)]);
+  await mkdir(join(sourceRoot, 'bin'));
+  for (let i = 0; i < 18; i += 1) {
+    await writeFile(join(sourceRoot, `bin/bad${String(i).padStart(2, '0')}.dll`), Buffer.from('MZ broken header', 'latin1'));
+  }
+  const service = projectService(Config({ sourceRoot, archiveRoot, reaPath: join(root, 'missing.mjs') }));
+  const target = await service.add({ kind: 'local', location: 'bin' });
+  const run = await service.dissect({ id: target.id, rea: false });
+  assert.equal(run.pe.files, 16);
+  assert.equal(run.pe.parsed, 0);
+  assert.equal(run.pe.unreadable, 16);
+  assert.equal(run.coverage.clipped, true);
+  const binaryRows = await service.dossier({ id: target.id, kind: 'binary', limit: 5 });
+  assert.equal(binaryRows.total, 16);
+  assert.ok(binaryRows.rows.every(row => row.status === 'unreadable' && typeof row.reason === 'string'));
 });

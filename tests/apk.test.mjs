@@ -14,7 +14,9 @@ function utf16Pool(strings) {
     offsets.push(cursor);
     const chars = Buffer.from(value, 'utf16le');
     const units = chars.length / 2;
-    const length = units < 0x80 ? Buffer.from([units]) : Buffer.from([0x80 | (units >> 8), units & 0xff]);
+    const length = Buffer.alloc(2);
+    if (units < 0x8000) length.writeUInt16LE(units, 0);
+    else { length.writeUInt16LE(0x8000 | (units >>> 16), 0); /* 双字形式在本测试中用不到 */ }
     parts.push(length, chars, Buffer.from([0, 0]));
     cursor += length.length + chars.length + 2;
   }
@@ -117,7 +119,7 @@ function buildAxml(plan = PLAN) {
     if (step[0] === 'start') {
       const attributes = step[2].map(([name, kind, value]) => (kind === 'str'
         ? { name: intern(name), type: 0x03, data: intern(value) }
-        : { name: intern(name), type: kind === 'boolean' ? 0x12 : 0x10, data: value }));
+        : { name: intern(name), type: kind === 'boolean' ? 0x12 : kind === 'hex' ? 0x11 : 0x10, data: value }));
       chunks.push(startElement(intern(step[1]), attributes));
     } else {
       chunks.push(endElement(intern(step[1])));
@@ -245,4 +247,37 @@ test('损坏的 ZIP 被拒绝且不留下批次', async t => {
   const target = await service.add({ kind: 'local', location: 'broken.apk' });
   await assert.rejects(service.dissect({ id: target.id }), /ZIP/u);
   assert.equal((await service.status({ id: target.id })).runCount, 0);
+});
+
+test('长字符串按 UTF-16 长度前缀读取，权限先去重再截断，十六进制整数转数值', async t => {
+  const { sourceRoot, service } = await setup(t);
+  const longName = `v${'长'.repeat(120)}`;
+  const plan = [
+    ['start', 'manifest', [['package', 'str', 'com.example.long'], ['versionCode', 'hex', 0x2a], ['versionName', 'str', longName]]],
+    ['start', 'uses-permission', [['name', 'str', 'android.permission.CAMERA']]],
+    ['end', 'uses-permission'],
+    ['start', 'uses-permission', [['name', 'str', 'android.permission.CAMERA']]],
+    ['end', 'uses-permission'],
+    ['start', 'uses-permission', [['name', 'str', 'android.permission.INTERNET']]],
+    ['end', 'uses-permission'],
+    ['end', 'manifest'],
+  ];
+  await writeFile(join(sourceRoot, 'long.apk'), buildZip([{ name: 'AndroidManifest.xml', data: buildAxml(plan) }]));
+  const target = await service.add({ kind: 'local', location: 'long.apk' });
+  const run = await service.dissect({ id: target.id });
+  assert.equal(run.apk.manifestStatus, 'parsed');
+  assert.equal(run.apk.manifest.versionName, longName);
+  assert.equal(run.apk.manifest.versionCode, 0x2a);
+  assert.deepEqual(run.apk.manifest.permissions, ['android.permission.CAMERA', 'android.permission.INTERNET']);
+  assert.equal(run.apk.manifest.permissionsTotal, 2);
+  assert.equal(run.apk.manifest.permissionsTruncated, false);
+});
+
+test('缺少清单时 manifestStatus 标为 absent', async t => {
+  const { sourceRoot, service } = await setup(t);
+  await writeFile(join(sourceRoot, 'nomanifest.apk'), buildZip([{ name: 'classes.dex', data: Buffer.from([0x64]) }]));
+  const target = await service.add({ kind: 'local', location: 'nomanifest.apk' });
+  const run = await service.dissect({ id: target.id });
+  assert.equal(run.apk.manifestStatus, 'absent');
+  assert.equal(run.apk.manifest, null);
 });
