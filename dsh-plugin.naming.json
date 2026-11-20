@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "policy": "dsh-plugin-naming/v1",
+  "plugin": { "namespace": "zhuifengqug", "name": "guoluo", "coordinate": "zhuifengqug/dsh-guoluo", "packageName": "@zhuifengqug/dsh-guoluo" },
+  "names": {
+    "pluginNames": ["guoluo"], "loaderIds": ["guoluo"], "services": [],
+    "tools": ["guoluo_probe", "guoluo_target_add", "guoluo_dissect", "guoluo_dossier", "guoluo_list", "guoluo_status"],
+    "commands": ["guoluo"], "skills": ["guoluo-rebuild"], "skillProviders": ["guoluo"],
+    "events": [], "settingsNamespaces": ["guoluo"], "routes": []
+  }
+}

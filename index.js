@@ -1,0 +1,61 @@
+import Schema from '@deepseek-ai/schemastery';
+import { readFileSync } from 'node:fs';
+import { projectService } from './lib/projects.mjs';
+
+export const name = 'guoluo';
+export const inject = ['tools', 'commands', 'skills', 'settings'];
+const pathSetting = description => Schema.string().default('').description(description).extra('volatile', true);
+export const Config = Schema.object({
+  sourceRoot: pathSetting('素材根：已存在的本地素材目录（绝对路径）'),
+  archiveRoot: pathSetting('档案根：单独的已存在输出目录（绝对路径）'),
+  reaPath: pathSetting('REA 启动器绝对路径；留空则从 PATH 查找'),
+}).description('虫珀·蜾蠃');
+
+const string = maxLength => ({ type: 'string', minLength: 1, maxLength });
+const enumeration = (...values) => ({ type: 'string', enum: values });
+const offset = { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER };
+const limit = { type: 'integer', minimum: 1, maximum: 50 };
+const id = string(36);
+const output = {
+  schema: { type: 'object', properties: {}, additionalProperties: true },
+  render: (_args, data) => [{ type: 'text', text: JSON.stringify(data) }],
+};
+const summary = '把本地 HTML/CSS、素材目录或 Electron ASAR 盘点成可追溯档案；按类别查看资产、CSS 变量和静态导航证据。';
+
+export function apply(ctx, config = {}) {
+  const projects = projectService(config);
+  const add = (suffix, description, properties, required, execute, timeoutMs = 10000) => {
+    ctx.effect(() => ctx.tools.register({
+      name: `guoluo_${suffix}`, description,
+      parameters: { type: 'object', properties, required, additionalProperties: false },
+      output, timeoutMs,
+      execute: (args, exec) => execute(args, exec.signal),
+    }));
+  };
+  add('probe', '检查蜾蠃目录配置和 REA CLI 版本。', {}, [], (_args, signal) => projects.probe(signal));
+  add('target_add', '登记素材根内的相对路径或 URL。URL 只登记；不会联网。', { kind: enumeration('local', 'url'), location: string(1000), label: string(80) }, ['kind', 'location'], projects.add);
+  add('dissect', '盘点已登记的本地静态素材，不运行目标应用；可同时保存手动导入的 REA 摘要元数据。', { id, reaSummary: string(500) }, ['id'], projects.dissect, 60000);
+  add('dossier', '分页查看已落盘的证据行，可固定 runId 并筛选种类。', { id, runId: string(50), kind: enumeration('asset', 'token', 'navigation', 'reference'), offset, limit }, ['id'], projects.dossier);
+  add('list', '列出已登记的蜾蠃档案。', { offset, limit }, [], projects.list);
+  add('status', '查看某个档案最近的盘点和批次数。', { id }, ['id'], projects.status);
+  const skill = readFileSync(new URL('./skills/guoluo-rebuild/SKILL.md', import.meta.url), 'utf8');
+  const body = skill.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/u, '');
+  ctx.effect(() => ctx.skills.register({ name: 'guoluo-rebuild', description: summary, content: body, source: 'runtime', provider: name }));
+  ctx.effect(() => ctx.commands.register({
+    name, description: '蜾蠃：检查配置、列档案、查看盘点状态', input: { hint: 'probe | list | status <id>' }, recordInput: false,
+    async handler({ rawInput, signal }) {
+      const [verb, target, ...rest] = (rawInput ?? '').trim().split(/\s+/u);
+      try {
+        let result;
+        if (verb === 'probe' && !target) result = await projects.probe(signal);
+        else if (verb === 'list' && !target) result = await projects.list({}, signal);
+        else if (verb === 'status' && target && !rest.length) result = await projects.status({ id: target }, signal);
+        else return { kind: verb ? 'error' : 'success', text: '蜾蠃 · /guoluo probe | list | status <id>。登记和盘点请用 guoluo_target_add、guoluo_dissect。' };
+        return { kind: 'success', text: JSON.stringify(result, null, 2) };
+      } catch (error) {
+        signal?.throwIfAborted();
+        return { kind: 'error', text: error.message };
+      }
+    },
+  }));
+}
