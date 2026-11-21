@@ -2,6 +2,8 @@
 
 本文件记录 `guoluo` 为什么不把 [craft-anything](https://github.com/storytold/craft-anything) 当执行后端，以及将来要接时必须先满足什么。属于设计判断，不含代码。
 
+当前边界：**不接自由形态进攻后端，只做本地静态资产盘点与规格产出**。
+
 ## 它是什么（据 v0.6.1 的仓库结构）
 
 单个 Rust 引擎，约 320 个 `ToolSpec`，UI（egui 桌面）、CLI、MCP、AI 四条入口都按 tool id 分发到同一个引擎；crate 分 L0–L6 强制分层（evidence/formats → disasm/js → analysis/platform → engines → engine → ai/mcp/setup → ui-egui），由 `cargo xtask layers` 守护。复刻流程是四阶段项目机（Study → Build → Check → Ready），项目目录固定 `craft.json / capture/ / app/ / checks/ / investigation.cany/ / inbox/`，人工决策走 inbox 问题卡。
@@ -10,7 +12,7 @@
 
 1. **证据账本模型**：每条结论带 confidence/coverage/limitations，大结果先给摘要再分页。`guoluo` 的 `coverage`、`meter`、`dossier` 分页与 `unknowns` 就是这个形状。
 2. **fail-closed 的项目机**：状态不可跳级，缺口不补就不算完成。`guoluo_check` 的 `blocked`/`needs-decision`/`complete` 与「`complete` 只表示自洽、不表示复刻完成」的措辞照此。
-3. **「像不像」可量化**：网站三档宽度截图比对。`guoluo_check` 的 `visual` 就是这个，只是差异数值交给 REA 计算并只做自洽校验。
+3. **「像不像」可量化**：`guoluo_check` 的 `visual` 记录网站在三档视口宽度下的截图差异。计算来源与校验范围以实跑版本的核对报告为准。
 
 ## 为什么不接（三个硬理由）
 
@@ -23,9 +25,9 @@
 不做「引擎代理」，只做**单一投影**：
 
 1. 只暴露一个 `guoluo_craft` 工具，参数只有 `{ verb, projectFolder }`，`verb` 枚举白名单（例如 `study`, `check`, `export-evidence`），其余一律拒绝。
-2. 两根写死由 `guoluo` 的 `archiveRoot`/`sourceRoot` 派生，不接受用户自填；`archiveRoot` 变更时插件自己重启子进程。
+2. 拟议中的自动化读根由 `guoluo.sourceRoot` 派生，因而可能与蜾蠃素材根覆盖同一棵目录。自动化写根由 `guoluo.archiveRoot` 派生。蜾蠃内部素材根和档案根互不包含，这项约束不代表两个工具的素材根完全分离。若将来接入，任一根变更都需先校验新边界再重启子进程。
 3. 所有返回先落 `craft.json`/`evidence.json` 到档案根，再按 `guoluo` 的分页约定投影给模型，绝不把它的原始 tool 输出整包回灌。
-4. 接入前须在自制夹具上验证发布包、固定操作及其输入输出。分别记录两个引擎的哈希算法、输入范围和证据定位。只有算法与输入定义一致时才比较摘要值。
+4. 接入前须在自制夹具上验证发布包、固定操作及其输入输出。分别记录两个引擎的哈希算法、输入范围、排序与序列化规则，以及证据定位。现有记录没有建立跨引擎摘要的可比性，相同素材不保证哈希值直接相等。只有确认输入字节与算法定义一致后，才比较摘要值。
 
 ## 未核实的部分
 
