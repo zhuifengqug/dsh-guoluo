@@ -185,8 +185,32 @@ test('UnityFS 在前置有填充与尾置布局按逻辑数据区校验多个节
   const broken = await inspectFixture(dir, 'broken-data.bundle', unityfs({
     blocks: [[4, 4, 0], [6, 2, 2]], data: Buffer.alloc(6), nodes: [['x.resS', 0, 4]],
   }));
-  assert.equal(broken.payload.status, 'unobserved');
+  assert.equal(broken.payload.status, 'failed');
   assert.match(broken.payload.reason, /数据区解压失败/u);
+});
+
+test('UnityFS 数据块 LZ4 正例由插件自行解压并切出节点指纹', async () => {
+  const dir = await scratch();
+  const literal = Buffer.concat([Buffer.from([0xe0]), Buffer.from('guoluo-fixture')]);
+  const facts = await inspectFixture(dir, 'lz4-data.bundle', unityfs({
+    blocks: [[14, literal.length, 2]], data: literal, nodes: [['assets/demo/data', 0, 14]],
+  }));
+  assert.ok(facts.blocks.compression.includes('lz4'));
+  assert.equal(facts.payload.status, 'parsed');
+  assert.equal(facts.payload.bytes, 14);
+  assert.equal(facts.payload.nodes[0].sha256, 'e5de319f964572a88cc57c63161098d5a0afcaf62866fe1b467e9ee16914d062');
+  assert.equal(facts.payload.nodes[0].preview, '67756f6c756f2d66697874757265');
+  // 反证：载荷里改一个字节，节点指纹必须跟着变，说明哈希绑定的确实是解压后的内容。
+  const tampered = await inspectFixture(dir, 'lz4-data-tamper.bundle', unityfs({
+    blocks: [[14, literal.length, 2]], data: Buffer.concat([Buffer.from([0xe0]), Buffer.from('guoluo-fixturf')]),
+    nodes: [['assets/demo/data', 0, 14]],
+  }));
+  assert.notEqual(tampered.payload.nodes[0].sha256, facts.payload.nodes[0].sha256);
+  // 反证：节点偏移挪一格，切出的字节不同，指纹同样不同。
+  const shifted = await inspectFixture(dir, 'lz4-data-shift.bundle', unityfs({
+    blocks: [[14, literal.length, 2]], data: literal, nodes: [['assets/demo/data', 1, 13]],
+  }));
+  assert.notEqual(shifted.payload.nodes[0].sha256, facts.payload.nodes[0].sha256);
 });
 
 test('UnityFS 拒绝声明不一致、超出数量或路径上限及越界的节点', async () => {

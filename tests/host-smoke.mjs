@@ -87,6 +87,12 @@ try {
   assert.equal(mocked.assets, 0);
   const checked = await call('check', { id });
   assert.equal(checked.verdict, 'complete');
+  const rebuild = join(sourceRoot, 'rebuild');
+  await mkdir(rebuild);
+  await writeFile(join(rebuild, 'index.html'), '<h1>rebuild</h1>');
+  const covered = await call('check', { id, candidate: { directory: 'rebuild' } });
+  assert.equal(covered.candidate.scope, 'candidate-coverage');
+  assert.equal(covered.candidate.verdict, 'partial');
   const site = join(sourceRoot, 'site');
   await mkdir(site);
   await writeFile(join(site, 'index.html'), '<a href="/docs">docs</a><img src="hero.png">');
@@ -202,7 +208,7 @@ try {
     }
     return { status: measured.visual.status, routes: measured.visual.routeCount, scores: summary.routes.map(route => route.score) };
   })() : null;
-  console.log(JSON.stringify({ result: 'passed', version: probe.pluginVersion, visual, tools: 11, skill: skill.name, command: command.name, liveSettings: true, rea: probe.rea, linkedRea: siteRun.rea.binding.status, derived: { spec: spec.obligations, tokens: tokens.total, exported: exported.count, mock: mocked.routes, check: checked.verdict }, pck: pck.pck.counts.entries, unity: unityDetails.rows[0].blocksInfo.compression }));
+  console.log(JSON.stringify({ result: 'passed', version: probe.pluginVersion, visual, tools: 11, skill: skill.name, command: command.name, liveSettings: true, rea: probe.rea, linkedRea: siteRun.rea.binding.status, derived: { spec: spec.obligations, tokens: tokens.total, exported: exported.count, mock: mocked.routes, check: checked.verdict, candidate: covered.candidate.verdict }, pck: pck.pck.counts.entries, unity: unityDetails.rows[0].blocksInfo.compression }));
 } finally {
   await ctx?.fiber.dispose();
   await rm(root, { recursive: true, force: true });

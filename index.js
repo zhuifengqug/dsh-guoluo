@@ -43,7 +43,7 @@ export function apply(ctx, config = {}) {
   add('tokens', '导出设计令牌：tokens.css、Tailwind v4 主题片段和机器可读清单。写到档案的 tokens/ 目录。', { id, runId: string(50) }, ['id'], projects.tokens);
   add('export', '导出资产清单到档案的 export/ 目录，可选 json、markdown、csv。', { id, runId: string(50), format: { type: 'string', enum: ['json', 'markdown', 'csv'] }, kind: enumeration('asset', 'token', 'navigation', 'reference') }, ['id'], projects.export);
   add('mock', '按本批证据生成零依赖 mock 服务：静态链接回占位页，素材按素材根回放。只生成，不代为启动。', { id, runId: string(50), port: { type: 'integer', minimum: 1024, maximum: 65535 } }, ['id'], projects.mock);
-  add('check', '核对复刻义务与证据的自洽性；显式给出 visual 时，再用 REA 比较两份本地静态页面（可按 routes 指定多条入口，各按 390/768/1440 三档视口测量），并用插件自身的 PNG 解码复算差异像素交叉核对，结果按路由独立呈报。', {
+  add('check', '核对复刻义务与证据的自洽性；给出 candidate 时再按规格核对候选工程目录里的素材、页面与令牌；显式给出 visual 时，再用 REA 比较两份本地静态页面（可按 routes 指定多条入口，各按 390/768/1440 三档视口测量），并用插件自身的 PNG 解码复算差异像素交叉核对，结果按路由独立呈报。', {
     id, runId: string(50), visual: { type: 'object', properties: {
       candidateDirectory: string(500), baselineEntry: string(500), candidateEntry: string(500),
       routes: { type: 'array', minItems: 1, maxItems: 16, items: { type: 'object', properties: {
@@ -51,6 +51,7 @@ export function apply(ctx, config = {}) {
       }, additionalProperties: false } },
       channelThreshold: { type: 'integer', minimum: 0, maximum: 255 },
     }, required: ['candidateDirectory'], additionalProperties: false },
+    candidate: { type: 'object', properties: { directory: string(500) }, required: ['directory'], additionalProperties: false },
   }, ['id'], projects.check, checkTimeoutMs);
   add('list', '列出已登记的蜾蠃档案。', { offset, limit }, [], projects.list);
   add('status', '查看某个档案最近的盘点和批次数。', { id }, ['id'], projects.status);
