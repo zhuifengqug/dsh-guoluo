@@ -148,7 +148,7 @@ async function rebuildView(run, evidencePath, text) {
   };
 }
 
-test('注册九个工具、技能和命令，读取当前 volatile 配置', async t => {
+test('注册十一个工具、技能和命令，读取当前 volatile 配置', async t => {
   const { config } = await setup(t);
   const live = Config({ reaPath: config.reaPath });
   const tools = new Map();
@@ -157,7 +157,7 @@ test('注册九个工具、技能和命令，读取当前 volatile 配置', asyn
   assert.equal(tools.size, 11);
   for (const name of ['probe', 'target_add', 'dissect', 'dossier', 'spec', 'tokens', 'export', 'mock', 'check', 'list', 'status']) assert.ok(tools.has(`guoluo_${name}`), name);
   assert.equal(skill.name, 'guoluo-rebuild');
-  assert.match(skill.content, /^\n?# 蜾蠃/u);
+  assert.match(skill.content, /^(?:\r?\n)?# 蜾蠃/u);
   const probe = tools.get('guoluo_probe');
   const exec = { signal: new AbortController().signal };
   assert.equal((await probe.execute({}, exec)).directories.ready, false);

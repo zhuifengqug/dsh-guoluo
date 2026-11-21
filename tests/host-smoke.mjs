@@ -1,6 +1,6 @@
 // Run against the installed DSH packages and an unpacked npm tarball, never the desktop profile.
 import assert from 'node:assert/strict';
-import { copyFile, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
@@ -64,8 +64,7 @@ try {
   assert.equal(desc?.autoGenerate, true);
   const tools = ctx.get('tools');
   assert.deepEqual(tools.schemas().map(tool => tool.name).filter(name => name.startsWith('guoluo_')).sort(), ['guoluo_check', 'guoluo_dissect', 'guoluo_dossier', 'guoluo_export', 'guoluo_list', 'guoluo_mock', 'guoluo_probe', 'guoluo_spec', 'guoluo_status', 'guoluo_target_add', 'guoluo_tokens']);
-  const exec = { signal: AbortSignal.timeout(15000) };
-  const call = (suffix, args) => tools.get(`guoluo_${suffix}`).execute(args, exec);
+  const call = (suffix, args) => tools.get(`guoluo_${suffix}`).execute(args, { signal: AbortSignal.timeout(15000) });
   assert.equal((await call('probe', {})).directories.ready, false);
   await settings.update('guoluo', { sourceRoot, archiveRoot }, desc.revision);
   const probe = await call('probe', {});
@@ -73,7 +72,7 @@ try {
   const skill = await ctx.get('skills').get('guoluo-rebuild', { cwd: root });
   assert.equal(skill?.provider, 'guoluo');
   const command = ctx.get('commands').find({}, 'guoluo');
-  assert.equal((await command.handler({ rawInput: 'list', ...exec })).kind, 'success');
+  assert.equal((await command.handler({ rawInput: 'list', signal: AbortSignal.timeout(15000) })).kind, 'success');
   const { id } = await call('target_add', { kind: 'local', location: 'design.css' });
   const { runId } = await call('dissect', { id });
   const { rows } = await call('dossier', { id, runId, kind: 'token' });
@@ -110,7 +109,74 @@ try {
   assert.equal(unity.unity.headersRead, 1);
   assert.equal(unityDetails.rows[0].blocksInfo.compressedBytes, 41);
   assert.equal(unityDetails.rows[0].blocksInfo.atEnd, true);
-  console.log(JSON.stringify({ result: 'passed', version: probe.pluginVersion, tools: 11, skill: skill.name, command: command.name, liveSettings: true, rea: probe.rea, linkedRea: siteRun.rea.binding.status, derived: { spec: spec.obligations, tokens: tokens.total, exported: exported.count, mock: mocked.routes, check: checked.verdict }, pck: pck.pck.counts.entries, unity: unityDetails.rows[0].blocksInfo.compression }));
+  assert.equal(unityDetails.rows[0].blocksInfo.status, 'unobserved');
+  assert.equal(unityDetails.rows[0].nodes, null);
+  await copyFile(new URL('./fixtures/unityfs-none.bundle', import.meta.url), join(sourceRoot, 'uncompressed.bundle'));
+  const { id: uncompressedId } = await call('target_add', { kind: 'local', location: 'uncompressed.bundle' });
+  const { runId: uncompressedRunId } = await call('dissect', { id: uncompressedId });
+  const { rows: [uncompressed] } = await call('dossier', { id: uncompressedId, runId: uncompressedRunId, kind: 'binary' });
+  assert.equal(uncompressed.blocksInfo.status, 'parsed');
+  assert.equal(uncompressed.blocks.count, 1);
+  assert.deepEqual(uncompressed.nodes.items, [{ index: 0, path: 'assets/demo/data', offset: 0, size: 14, flags: 4 }]);
+  // Minimal header-only PE32+ fixture. It has no code or data directories.
+  const peFixture = Buffer.alloc(0x200);
+  peFixture.write('MZ');
+  peFixture.writeUInt32LE(0x80, 0x3c);
+  peFixture.writeUInt32LE(0x4550, 0x80);
+  peFixture.writeUInt16LE(0x8664, 0x84);
+  peFixture.writeUInt16LE(240, 0x94);
+  peFixture.writeUInt16LE(0x20b, 0x98);
+  peFixture.writeBigUInt64LE(0x140000000n, 0x98 + 24);
+  peFixture.writeUInt32LE(peFixture.length, 0x98 + 60);
+  peFixture.writeUInt16LE(3, 0x98 + 68);
+  await writeFile(join(sourceRoot, 'metadata-only.dll'), peFixture);
+  const { id: peId } = await call('target_add', { kind: 'local', location: 'metadata-only.dll' });
+  const peRun = await call('dissect', { id: peId });
+  const { rows: [pe] } = await call('dossier', { id: peId, runId: peRun.runId, kind: 'binary' });
+  assert.equal(pe.format, 'pe32+');
+  assert.equal(pe.machine, 'x64');
+  assert.equal(pe.imports.status, 'absent');
+  assert.equal(pe.exports.status, 'absent');
+  const peSpec = await call('spec', { id: peId, runId: peRun.runId });
+  const peEvidence = JSON.parse(await readFile(peSpec.files.json, 'utf8')).evidence.pe.files;
+  assert.equal(peEvidence[0].path, 'metadata-only.dll');
+  assert.equal(peEvidence[0].format, 'pe32+');
+  const visual = process.env.GUOLUO_TEST_REA ? await (async () => {
+    const desc3 = settings.describe().find(row => row.ns === 'guoluo');
+    await settings.update('guoluo', { reaPath: process.env.GUOLUO_TEST_REA }, desc3.revision);
+    const pages = join(sourceRoot, 'pages');
+    await mkdir(pages);
+    await writeFile(join(pages, 'index.html'), '<style>body{background:#fff}</style><h1>one</h1>');
+    await writeFile(join(pages, 'docs.html'), '<style>body{background:#fff}</style><h1>two</h1>');
+    const { id: pagesId } = await call('target_add', { kind: 'local', location: 'pages' });
+    const pagesRun = await call('dissect', { id: pagesId });
+    const rebuilt = join(sourceRoot, 'pages-rebuilt');
+    await mkdir(rebuilt);
+    await writeFile(join(rebuilt, 'index.html'), '<style>body{background:#fff}</style><h1>one</h1>');
+    await writeFile(join(rebuilt, 'docs.html'), '<style>body{background:#fff}</style><h1>two</h1>');
+    const measured = await tools.get('guoluo_check').execute({ id: pagesId, runId: pagesRun.runId, visual: {
+      candidateDirectory: 'pages-rebuilt',
+      routes: [{ baselineEntry: 'index.html' }, { baselineEntry: 'docs.html', candidateEntry: 'docs.html' }],
+    } }, { signal: AbortSignal.timeout(400000) });
+    assert.equal(measured.visual.status, 'measured');
+    assert.equal(measured.visual.routeCount, 2);
+    const summary = JSON.parse(await readFile(join(measured.visual.directory, 'summary.json'), 'utf8'));
+    assert.equal(summary.thresholdNote, '本分数按逐通道 0 阈值计算，含抗锯齿差异');
+    assert.equal(summary.routes.length, 2);
+    for (const [index, route] of summary.routes.entries()) {
+      assert.equal(route.status, 'verified');
+      assert.equal(route.score, 1);
+      assert.equal(route.score, measured.visual.routes[index].score);
+      assert.deepEqual(route.rounds.map(round => round.width), [390, 768, 1440]);
+      for (const round of route.rounds) {
+        assert.equal(round.status, 'verified');
+        assert.equal(round.rea.changedPixels, 0);
+        assert.equal(round.computed.changedPixels, round.rea.changedPixels);
+      }
+    }
+    return { status: measured.visual.status, routes: measured.visual.routeCount, scores: summary.routes.map(route => route.score) };
+  })() : null;
+  console.log(JSON.stringify({ result: 'passed', version: probe.pluginVersion, visual, tools: 11, skill: skill.name, command: command.name, liveSettings: true, rea: probe.rea, linkedRea: siteRun.rea.binding.status, derived: { spec: spec.obligations, tokens: tokens.total, exported: exported.count, mock: mocked.routes, check: checked.verdict }, pck: pck.pck.counts.entries, unity: unityDetails.rows[0].blocksInfo.compression }));
 } finally {
   await ctx?.fiber.dispose();
   await rm(root, { recursive: true, force: true });
