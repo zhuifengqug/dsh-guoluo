@@ -77,6 +77,6 @@ DSH 0.2.2-rc.5 的本地应用资产档案插件。把静态素材整理成可�
 
 ## 开发
 
-需要 Node.js 22 或以上。`npm ci` 后用 `npm run check` 运行回归并核对打包清单；默认回归用内置的假 REA 与假浏览器覆盖整条视觉管线，无需真实 Chrome。`GUOLUO_TEST_REA=<rea 可执行路径>` 会额外跑真实 REA 的截图与比对用例（需本机 Chrome）。`npm run check` 用 `test:serial` 串行跑文件：并发跑时同时起多个 Chromium 会偶发让某一档落到环境失败，串行后稳定；日常改动用 `npm test` 并发更快。`node tests/host-smoke.mjs <DSH node_modules> <包目录>` 在隔离 profile 里真实加载。提交与验证约定见 [AGENTS.md](AGENTS.md)。此项目使用 MIT 许可。
+需要 Node.js 22 或以上。`npm ci` 后用 `npm run check` 运行回归并核对打包清单；默认回归用内置的假 REA 与假浏览器覆盖整条视觉管线，无需真实 Chrome。`GUOLUO_TEST_REA=<rea 可执行路径>` 会额外跑真实 REA 的截图与比对用例（需本机 Chrome）。另有两条交叉核对会按本机条件自动启用或在缺失时跳过：`tests/apk-cross.test.mjs` 用 `aapt2` 独立解析同一份 APK，逐项比对包名、版本、SDK、标签、权限与启动活动（`GUOLUO_TEST_AAPT2` / `GUOLUO_TEST_ANDROID_JAR` 可指定路径）；`tests/pe.test.mjs` 的「系统 PE 文件」用例会读 `%SystemRoot%\System32` 下的 kernel32/ntdll/user32/notepad，检查节范围落在文件内。`npm run check` 用 `test:serial` 串行跑文件：并发跑时同时起多个 Chromium 会偶发让某一档落到环境失败，串行后稳定；日常改动用 `npm test` 并发更快。`node tests/host-smoke.mjs <DSH node_modules> <包目录>` 在隔离 profile 里真实加载。提交与验证约定见 [AGENTS.md](AGENTS.md)。此项目使用 MIT 许可。
 
 Godot 4.7.2 的 `PCKPacker` 生成了普通条目和零字节条目两份夹具。[UnityFS v6 夹具](tests/fixtures/unityfs-none.bundle) 由仓库脚本拼装，再用 UnityPy 1.25.4 回读。[UnityFS v7 夹具](tests/fixtures/unityfs-lz4-tail.bundle) 由 UnityPy 保存并回读，使用尾置 LZ4 块信息段（该夹具的数据块本身未压缩）。数据块为 LZ4 的正例与「改一字节 / 挪一格节点位移即变指纹」的反证用例，由 [Unity 回归测试](tests/unity.test.mjs) 在测试内就地拼装 LZ4 字面量块生成。另有一份 UnityPy `BundleFile.save("none")` 独立写入的 v7 包及回读结果，内嵌在 [Unity 回归测试](tests/unity.test.mjs) 中，常规 Node 测试不依赖 Python。

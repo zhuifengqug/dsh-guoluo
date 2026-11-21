@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, open, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, open, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -493,5 +493,35 @@ test('PE 分页到达读取预算后终止游标，并区分可翻阅条数与�
     } else {
       assert.equal(last.rows[0].symbol, '#3');
     }
+  }
+});
+
+test('系统 PE 文件能过头部与节表，且节范围落在文件内', async t => {
+  const candidates = ['kernel32.dll', 'ntdll.dll', 'user32.dll', 'notepad.exe']
+    .map(name => join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', name));
+  const existing = [];
+  for (const path of candidates) {
+    try {
+      await access(path);
+      existing.push(path);
+    } catch {
+      // 没有这个文件就跳过
+    }
+  }
+  if (!existing.length) {
+    t.skip('本机没有可用的系统 PE 样本，跳过');
+    return;
+  }
+  for (const path of existing) {
+    const facts = await parsePe(path, new AbortController().signal);
+    assert.match(facts.format, /^pe32/u);
+    assert.ok(facts.sections.length > 0, `${path} 应至少有一个节`);
+    for (const section of facts.sections) {
+      assert.ok(section.rawOffset >= 0 && section.rawOffset < facts.bytes, `${path} 的节原始偏移应落在文件内`);
+      assert.ok(section.rawOffset + section.rawSize <= facts.bytes, `${path} 的节原始范围不应越过文件末尾`);
+    }
+    assert.ok(['parsed', 'partial', 'absent', 'unreadable'].includes(facts.imports.status));
+    assert.ok(['parsed', 'partial', 'absent', 'unreadable'].includes(facts.exports.status));
+    if (facts.exports.status === 'parsed') assert.ok(facts.exports.namedCount >= 0);
   }
 });
