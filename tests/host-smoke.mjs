@@ -141,6 +141,26 @@ try {
   const peEvidence = JSON.parse(await readFile(peSpec.files.json, 'utf8')).evidence.pe.files;
   assert.equal(peEvidence[0].path, 'metadata-only.dll');
   assert.equal(peEvidence[0].format, 'pe32+');
+  // apk-pagination.apk 由 aapt2 link 生成，清单里各有 70 条 uses-permission 与 activity。
+  await copyFile(new URL('./fixtures/apk-pagination.apk', import.meta.url), join(sourceRoot, 'pagination.apk'));
+  const { id: apkId } = await call('target_add', { kind: 'local', location: 'pagination.apk' });
+  const apkRun = await call('dissect', { id: apkId });
+  assert.equal(apkRun.apk.manifest.permissions.total, 70);
+  assert.equal(apkRun.apk.manifest.permissions.retained, 70);
+  assert.equal(apkRun.apk.manifest.activities.total, 70);
+  const firstPage = await call('dossier', { id: apkId, runId: apkRun.runId, kind: 'apk-permission', limit: 50 });
+  assert.equal(firstPage.returned, 50);
+  assert.equal(firstPage.total, 70);
+  assert.equal(firstPage.nextOffset, 50);
+  assert.equal(firstPage.rows[0].name, 'com.example.guoluo.permission.P00');
+  const secondPage = await call('dossier', { id: apkId, runId: apkRun.runId, kind: 'apk-permission', offset: 50, limit: 50 });
+  assert.equal(secondPage.returned, 20);
+  assert.equal(secondPage.nextOffset, null);
+  assert.equal(secondPage.rows[0].name, 'com.example.guoluo.permission.P50');
+  const apkSpec = await call('spec', { id: apkId, runId: apkRun.runId });
+  const apkEvidence = JSON.parse(await readFile(apkSpec.files.json, 'utf8')).evidence.apk;
+  assert.equal(apkEvidence.permissions.total, 70);
+  assert.equal(apkEvidence.permissions.retained, 70);
   const visual = process.env.GUOLUO_TEST_REA ? await (async () => {
     const desc3 = settings.describe().find(row => row.ns === 'guoluo');
     await settings.update('guoluo', { reaPath: process.env.GUOLUO_TEST_REA }, desc3.revision);
