@@ -130,7 +130,7 @@ test('UnityPy 独立写入并回读的无压缩表与插件逐项一致', async 
   assert.deepEqual(codecCounts, { none: 1 });
 });
 
-test('尾置 LZ4 块信息由插件自行解压，LZMA 与 LZHAM 仍标未观测', async () => {
+test('尾置 LZ4 块信息由插件自行解压，LZHAM 仍标未观测', async () => {
   const bytes = await stock('unityfs-lz4-tail.bundle');
   const facts = await inspectUnityHeader(fileURLToPath(fixture('unityfs-lz4-tail.bundle')), bytes.length, 'unity-bundle');
   assert.equal(facts.formatVersion, 7);
@@ -144,13 +144,37 @@ test('尾置 LZ4 块信息由插件自行解压，LZMA 与 LZHAM 仍标未观测
   assert.deepEqual(facts.nodes.items, [{ index: 0, path: 'assets/demo/data', offset: 0, size: 14, flags: 4 }]);
 
   const dir = await scratch();
-  for (const [codec, name] of [[1, 'lzma'], [4, 'lzham']]) {
+  for (const [codec, name] of [[4, 'lzham']]) {
     const unsupported = await inspectFixture(dir, `${name}.bundle`, unityfs({ codec, nodes: [['not-against-codec', 0, 4]] }));
     assert.equal(unsupported.blocksInfo.compression, name);
     assert.equal(unsupported.blocksInfo.status, 'unobserved');
     assert.equal(unsupported.nodes, null);
     assert.match(unsupported.reason, /暂未支持/u);
   }
+});
+
+test('UnityPy 写出的 LZMA 包由插件自行解压块信息与数据块', async () => {
+  const small = await stock('unityfs-lzma.bundle');
+  const infoOnly = await inspectUnityHeader(fileURLToPath(fixture('unityfs-lzma.bundle')), small.length, 'unity-bundle');
+  assert.equal(infoOnly.formatVersion, 7);
+  assert.equal(infoOnly.blocksInfo.compressionCode, 1);
+  assert.equal(infoOnly.blocksInfo.compression, 'lzma');
+  assert.equal(infoOnly.blocksInfo.status, 'parsed');
+  assert.equal(infoOnly.blocksInfo.compressedBytes, 46);
+  assert.equal(infoOnly.blocksInfo.uncompressedBytes, 71);
+  assert.equal(infoOnly.payload.status, 'parsed');
+  assert.equal(infoOnly.payload.nodes[0].sha256, 'e5de319f964572a88cc57c63161098d5a0afcaf62866fe1b467e9ee16914d062');
+  assert.equal(infoOnly.payload.nodes[0].preview, '67756f6c756f2d66697874757265');
+
+  const big = await stock('unityfs-lzma-data.bundle');
+  const withData = await inspectUnityHeader(fileURLToPath(fixture('unityfs-lzma-data.bundle')), big.length, 'unity-bundle');
+  assert.deepEqual(withData.blocks.items.map(({ index, ...block }) => block), [{ uncompressedSize: 4110, compressedSize: 291, flags: 1, compression: 'lzma' }]);
+  assert.equal(withData.payload.status, 'parsed');
+  assert.equal(withData.payload.bytes, 4110);
+  assert.deepEqual(withData.payload.nodes.map(node => node.sha256), [
+    'e5de319f964572a88cc57c63161098d5a0afcaf62866fe1b467e9ee16914d062',
+    'c1c10a74a227a912f6ebfb36273ee6c678349f9fb9535bc60a9f2467f6e5753d',
+  ]);
 });
 
 test('LZ4 块信息自称压缩却解不开时明确报错，不返回半张表', async () => {

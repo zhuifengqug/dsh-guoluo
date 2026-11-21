@@ -1,16 +1,43 @@
 {
   "name": "@zhuifengqug/dsh-guoluo",
-  "version": "0.15.0",
+  "version": "0.16.0",
   "description": "虫珀·蜾蠃：把应用的资产与可见行为整理成可追溯的项目档案",
   "license": "MIT",
   "author": "zhuifengqug",
   "type": "module",
   "main": "index.js",
-  "exports": { ".": "./index.js", "./icon": "./icon.svg", "./package.json": "./package.json" },
-  "files": ["index.js", "lib/", "skills/", "icon.svg", "cordis.patch.yml", "dsh-plugin.naming.json", "README.md"],
-  "engines": { "node": ">=22" },
-  "scripts": { "test": "node --test tests/*.test.mjs", "test:serial": "node --test --test-concurrency=1 tests/*.test.mjs", "check": "npm run test:serial && npm pack --dry-run" },
-  "dependencies": { "@deepseek-ai/schemastery": "3.19.0", "parse5": "8.0.0", "playwright-core": "1.64.1", "postcss": "8.5.16" },
-  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } },
+  "exports": {
+    ".": "./index.js",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "lib/",
+    "skills/",
+    "icon.svg",
+    "cordis.patch.yml",
+    "dsh-plugin.naming.json",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "test:serial": "node --test --test-concurrency=1 tests/*.test.mjs",
+    "check": "npm run test:serial && npm pack --dry-run"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "3.19.0",
+    "parse5": "8.0.0",
+    "playwright-core": "1.64.1",
+    "postcss": "8.5.16"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
   "dshTarget": "0.2.2-rc.5"
 }

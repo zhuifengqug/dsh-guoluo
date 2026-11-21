@@ -108,6 +108,32 @@ def independent_snapshot(bundle: BundleFile) -> dict:
     }
 
 
+LZMA_PAYLOAD = bytes((i * 37) % 256 for i in range(4096))
+
+
+def write_lzma(target: Path) -> None:
+    """LZMA 版夹具：块信息段用 LZMA，第二份再让数据块本身也走 LZMA。"""
+    data = build()
+    bundle = verify(data, version=6, flags=0x40)
+    bundle.version = 7
+    bundle._uses_block_alignment = True
+    info_only = bundle.save("lzma")
+    verify(info_only, version=7, flags=0x41)
+    target.write_bytes(info_only)
+    print(f"written {target} {len(info_only)} bytes, UnityPy round-trip ok")
+    extra = EndianBinaryWriter(LZMA_PAYLOAD)
+    extra.flags = 4
+    bundle.files["assets/demo/big.resS"] = extra
+    data_blocks = bundle.save("lzma")
+    reread = BundleFile(EndianBinaryReader(data_blocks), None)
+    assert int(reread.dataflags) == 0x41, reread.dataflags
+    assert list(reread.files) == [NODE_PATH, "assets/demo/big.resS"], list(reread.files)
+    assert bytes(reread.files["assets/demo/big.resS"].bytes) == LZMA_PAYLOAD
+    big = target.with_name("unityfs-lzma-data.bundle")
+    big.write_bytes(data_blocks)
+    print(f"written {big} {len(data_blocks)} bytes, UnityPy round-trip ok")
+
+
 def main() -> int:
     target = Path(sys.argv[1])
     data = build()
@@ -122,6 +148,7 @@ def main() -> int:
     compressed_target = target.with_name("unityfs-lz4-tail.bundle")
     compressed_target.write_bytes(compressed)
     print(f"written {compressed_target} {len(compressed)} bytes, verified by UnityPy")
+    write_lzma(target.with_name('unityfs-lzma.bundle'))
     print(json.dumps(independent_snapshot(bundle)))
     return 0
 
