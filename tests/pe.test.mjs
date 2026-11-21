@@ -235,6 +235,58 @@ test('目录盘点把 PE 登记为二进制资产并写入规格与 mock 说明'
   assert.equal(binaryRows.rows[0].imports.items[0].dll, 'DEMO.dll');
 });
 
+test('PE 导入与命名导出可按 offset/limit 分页读全量', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'guoluo-pe-pages-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const [sourceRoot, archiveRoot] = ['source', 'archive'].map(name => join(root, name));
+  await Promise.all([mkdir(sourceRoot), mkdir(archiveRoot)]);
+  await mkdir(join(sourceRoot, 'bin'));
+  await writeFile(join(sourceRoot, 'bin/app.exe'), buildPe());
+  await writeFile(join(sourceRoot, 'bin/demo.dll'), buildPe({ importRva: 0x9000, exportRva: 0x9000 }));
+  const service = projectService(Config({ sourceRoot, archiveRoot, reaPath: join(root, 'missing.mjs') }));
+  const target = await service.add({ kind: 'local', location: 'bin' });
+  await service.dissect({ id: target.id, rea: false });
+
+  // 多个 PE 时必须用 path 指明；写错的路径也要明确拒绝。
+  await assert.rejects(service.dossier({ id: target.id, kind: 'pe-imports' }), /多个 PE 文件/u);
+  await assert.rejects(service.dossier({ id: target.id, kind: 'pe-imports', path: 'ghost.exe' }), /没有登记该 PE 文件/u);
+
+  // 导入符号逐条分页：limit=1 时两次分别拿到 CreateThing 与 #3。
+  const first = await service.dossier({ id: target.id, kind: 'pe-imports', path: 'app.exe', offset: 0, limit: 1 });
+  assert.equal(first.total, 2);
+  assert.deepEqual(first.rows, [{ kind: 'pe-imports', dll: 'DEMO.dll', symbol: 'CreateThing' }]);
+  assert.equal(first.nextOffset, 1);
+  const second = await service.dossier({ id: target.id, kind: 'pe-imports', path: 'app.exe', offset: 1, limit: 1 });
+  assert.deepEqual(second.rows, [{ kind: 'pe-imports', dll: 'DEMO.dll', symbol: '#3' }]);
+  assert.equal(second.nextOffset, null);
+  assert.equal(second.truncated, false);
+
+  // 命名导出分页同理，且 offset 越过末尾时返回空页而不是报错。
+  const exported = await service.dossier({ id: target.id, kind: 'pe-exports', path: 'app.exe', offset: 0, limit: 5 });
+  assert.equal(exported.total, 1);
+  assert.deepEqual(exported.rows, [{ kind: 'pe-exports', name: 'DoThing', ordinal: 1 }]);
+  const beyond = await service.dossier({ id: target.id, kind: 'pe-exports', path: 'app.exe', offset: 9, limit: 5 });
+  assert.deepEqual(beyond.rows, []);
+  assert.equal(beyond.nextOffset, null);
+});
+
+test('单个 PE 档案可直接用 pe-imports 读符号，不必再写 path', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'guoluo-pe-single-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const [sourceRoot, archiveRoot] = ['source', 'archive'].map(name => join(root, name));
+  await Promise.all([mkdir(sourceRoot), mkdir(archiveRoot)]);
+  await writeFile(join(sourceRoot, 'only.dll'), buildPe({ wide: false }));
+  const service = projectService(Config({ sourceRoot, archiveRoot, reaPath: join(root, 'missing.mjs') }));
+  const target = await service.add({ kind: 'local', location: 'only.dll' });
+  await service.dissect({ id: target.id, rea: false });
+  const page = await service.dossier({ id: target.id, kind: 'pe-imports', limit: 10 });
+  assert.equal(page.path, 'only.dll');
+  assert.deepEqual(page.rows, [
+    { kind: 'pe-imports', dll: 'DEMO.dll', symbol: 'CreateThing' },
+    { kind: 'pe-imports', dll: 'DEMO.dll', symbol: '#3' },
+  ]);
+});
+
 test('PE 解析失败的尝试同样消耗名额并记录不可读条目', async t => {
   const root = await mkdtemp(join(tmpdir(), 'guoluo-pe-budget-'));
   t.after(() => rm(root, { recursive: true, force: true }));

@@ -151,6 +151,11 @@ try {
   assert.equal(pe.machine, 'x64');
   assert.equal(pe.imports.status, 'absent');
   assert.equal(pe.exports.status, 'absent');
+  // PE 符号分页单文件档案不必写 path；这份夹具没有导入导出，页应为空但结构完整。
+  const peSymbols = await call('dossier', { id: peId, runId: peRun.runId, kind: 'pe-exports', limit: 5 });
+  assert.equal(peSymbols.path, 'metadata-only.dll');
+  assert.equal(peSymbols.total, 0);
+  assert.deepEqual(peSymbols.rows, []);
   const peSpec = await call('spec', { id: peId, runId: peRun.runId });
   const peEvidence = JSON.parse(await readFile(peSpec.files.json, 'utf8')).evidence.pe.files;
   assert.equal(peEvidence[0].path, 'metadata-only.dll');
