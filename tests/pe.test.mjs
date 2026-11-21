@@ -209,7 +209,10 @@ test('目录盘点把 PE 登记为二进制资产并写入规格与 mock 说明'
   const run = await service.dissect({ id: target.id, rea: false });
   const assets = await service.dossier({ id: target.id, kind: 'asset' });
   const exe = assets.rows.find(row => row.path === 'app.exe');
-  assert.deepEqual(exe, { kind: 'asset', path: 'app.exe', type: 'executable', bytes: RAW + SECTION_SIZE, binary: 'pe' });
+  // 素材现在带内容指纹，断言把指纹单独核形状，其余字段仍逐项相等。
+  const { sha256: exeSha, ...exeRest } = exe;
+  assert.match(exeSha, /^[0-9a-f]{64}$/u);
+  assert.deepEqual(exeRest, { kind: 'asset', path: 'app.exe', type: 'executable', bytes: RAW + SECTION_SIZE, binary: 'pe' });
   const spec = await service.spec({ id: target.id, runId: run.runId });
   const specJson = JSON.parse(await readFile(spec.files.json, 'utf8'));
   const specMarkdown = await readFile(spec.files.markdown, 'utf8');

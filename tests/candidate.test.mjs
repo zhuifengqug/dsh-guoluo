@@ -36,18 +36,44 @@ test('候选覆盖度：找到素材、页面与已声明令牌，缺的逐项�
     assert.equal(coverage.verdict, 'partial');
     assert.equal(coverage.directory, 'copy');
     assert.equal(coverage.clipped, false);
-    assert.deepEqual(coverage.assets.present.map(item => item.target), ['app.css', 'index.html']);
+    assert.deepEqual(coverage.assets.present.map(item => item.target), ['index.html']);
+    assert.equal(coverage.assets.present[0].same, true);
+    // 候选的 app.css 内容与档案不同：判为 changed 并并列两边指纹，而不是当作已覆盖。
+    assert.deepEqual(coverage.assets.changed.map(item => item.target), ['app.css']);
+    assert.match(coverage.assets.changed[0].archive, /^[0-9a-f]{64}$/u);
+    assert.match(coverage.assets.changed[0].built, /^[0-9a-f]{64}$/u);
+    assert.notEqual(coverage.assets.changed[0].archive, coverage.assets.changed[0].built);
     assert.deepEqual(coverage.assets.missing.map(item => item.target), ['hero.png']);
     assert.deepEqual(coverage.structures.missing, []);
     assert.deepEqual(coverage.tokens.declared.map(item => item.target), ['--accent']);
     assert.deepEqual(coverage.tokens.missing.map(item => item.target), ['--gap']);
     assert.match(coverage.note, /没有找到对应物/u);
+    assert.match(coverage.note, /1 个同名素材的内容指纹与档案不同/u);
     // 多出来的文件不制造虚假通过，也不进缺口清单。
     assert.equal(coverage.files.total, 3);
-    assert.equal(coverage.unchecked.length, 3);
+    assert.equal(coverage.unchecked.length, 4);
     assert.deepEqual(coverage.values.differs, []);
     assert.equal(coverage.values.checked, 1);
     assert.equal(coverage.values.same, 1);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('候选覆盖度：内容完全相同的素材判为已覆盖且标同指纹，不算差异', async () => {
+  const { dir, id, runId, service, source } = await scratch();
+  try {
+    await mkdir(join(source, 'exact'), { recursive: true });
+    await writeFile(join(source, 'exact', 'index.html'), html);
+    await writeFile(join(source, 'exact', 'app.css'), css);
+    await writeFile(join(source, 'exact', 'hero.png'), Buffer.from('89504e470d0a1a0a', 'hex'));
+    const result = await service.check({ id, runId, candidate: { directory: 'exact' } });
+    const coverage = result.candidate;
+    assert.equal(coverage.verdict, 'complete');
+    assert.deepEqual(coverage.assets.missing, []);
+    assert.deepEqual(coverage.assets.changed, []);
+    assert.deepEqual(coverage.assets.present.map(item => item.target), ['app.css', 'hero.png', 'index.html']);
+    assert.ok(coverage.assets.present.every(item => item.same === true));
+    assert.equal(coverage.hashedFiles, 3);
+    assert.equal(coverage.skippedHashes, 0);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 

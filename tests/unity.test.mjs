@@ -359,8 +359,12 @@ test('目录盘点登记 Unity 素材行、头部证据、规格与不回放说�
 
   assert.equal(run.rea.status, 'off');
   const rows = (await service.dossier({ id: added.id, runId: run.runId, kind: 'asset', limit: 50 })).rows;
-  assert.deepEqual(rows.find(row => row.path === 'assets/desktop.bundle'), { kind: 'asset', path: 'assets/desktop.bundle', type: 'unity-bundle', bytes: 156 });
-  assert.deepEqual(rows.find(row => row.path === 'global-metadata.dat'), { kind: 'asset', path: 'global-metadata.dat', type: 'il2cpp-metadata', bytes: metadata.length });
+  const { sha256: bundleSha, ...bundleRest } = rows.find(row => row.path === 'assets/desktop.bundle');
+  assert.match(bundleSha, /^[0-9a-f]{64}$/u);
+  assert.deepEqual(bundleRest, { kind: 'asset', path: 'assets/desktop.bundle', type: 'unity-bundle', bytes: 156 });
+  const { sha256: metadataSha, ...metadataRest } = rows.find(row => row.path === 'global-metadata.dat');
+  assert.match(metadataSha, /^[0-9a-f]{64}$/u);
+  assert.deepEqual(metadataRest, { kind: 'asset', path: 'global-metadata.dat', type: 'il2cpp-metadata', bytes: metadata.length });
   assert.deepEqual(run.unity, { files: 2, headersRead: 2, detail: '逐文件头部证据见 guoluo_dossier kind=binary。' });
 
   const binary = await service.dossier({ id: added.id, runId: run.runId, kind: 'binary', limit: 1 });
