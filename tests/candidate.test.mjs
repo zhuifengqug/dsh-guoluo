@@ -44,7 +44,30 @@ test('候选覆盖度：找到素材、页面与已声明令牌，缺的逐项�
     assert.match(coverage.note, /没有找到对应物/u);
     // 多出来的文件不制造虚假通过，也不进缺口清单。
     assert.equal(coverage.files.total, 3);
-    assert.equal(coverage.unchecked.length, 2);
+    assert.equal(coverage.unchecked.length, 3);
+    assert.deepEqual(coverage.values.differs, []);
+    assert.equal(coverage.values.checked, 1);
+    assert.equal(coverage.values.same, 1);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('候选覆盖度：同名令牌取值不同时并列两个值，不把差异算成缺失', async () => {
+  const { dir, id, runId, service, source } = await scratch();
+  try {
+    await mkdir(join(source, 'drift'), { recursive: true });
+    await writeFile(join(source, 'drift', 'index.html'), html);
+    await writeFile(join(source, 'drift', 'app.css'), ':root{--accent:#445566;--gap:8px}\n');
+    await writeFile(join(source, 'drift', 'hero.png'), Buffer.from('89504e470d0a1a0a', 'hex'));
+    const result = await service.check({ id, runId, candidate: { directory: 'drift' } });
+    const coverage = result.candidate;
+    // 全部找到 → 覆盖度仍是 complete；取值不同另列，不当缺失。
+    assert.equal(coverage.verdict, 'complete');
+    assert.deepEqual(coverage.values.differs, [
+      { id: 'T-accent', target: '--accent', archive: '#112233', built: '#445566', path: 'app.css' },
+    ]);
+    assert.equal(coverage.values.checked, 2);
+    assert.equal(coverage.values.same, 1);
+    assert.match(coverage.note, /1 个令牌的声明值与档案不同/u);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
