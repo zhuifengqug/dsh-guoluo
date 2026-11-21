@@ -63,7 +63,7 @@ try {
   const desc = settings.describe().find(row => row.ns === 'guoluo');
   assert.equal(desc?.autoGenerate, true);
   const tools = ctx.get('tools');
-  assert.deepEqual(tools.schemas().map(tool => tool.name).filter(name => name.startsWith('guoluo_')).sort(), ['guoluo_check', 'guoluo_dissect', 'guoluo_dossier', 'guoluo_export', 'guoluo_list', 'guoluo_mock', 'guoluo_probe', 'guoluo_spec', 'guoluo_status', 'guoluo_target_add', 'guoluo_tokens']);
+  assert.deepEqual(tools.schemas().map(tool => tool.name).filter(name => name.startsWith('guoluo_')).sort(), ['guoluo_brief', 'guoluo_check', 'guoluo_dissect', 'guoluo_dossier', 'guoluo_export', 'guoluo_list', 'guoluo_mock', 'guoluo_probe', 'guoluo_spec', 'guoluo_status', 'guoluo_target_add', 'guoluo_tokens']);
   const call = (suffix, args) => tools.get(`guoluo_${suffix}`).execute(args, { signal: AbortSignal.timeout(15000) });
   assert.equal((await call('probe', {})).directories.ready, false);
   await settings.update('guoluo', { sourceRoot, archiveRoot }, desc.revision);
@@ -79,6 +79,8 @@ try {
   assert.deepEqual(rows, [{ kind: 'token', path: 'design.css', line: 1, name: '--accent', value: '#112233' }]);
   const spec = await call('spec', { id });
   assert.equal(spec.obligations, 2);
+  const brief = await call('brief', { id, runId });
+  assert.equal(brief.runId, runId);
   const tokens = await call('tokens', { id });
   assert.equal(tokens.total, 1);
   const exported = await call('export', { id, format: 'csv' });
@@ -208,7 +210,7 @@ try {
     }
     return { status: measured.visual.status, routes: measured.visual.routeCount, scores: summary.routes.map(route => route.score) };
   })() : null;
-  console.log(JSON.stringify({ result: 'passed', version: probe.pluginVersion, visual, tools: 11, skill: skill.name, command: command.name, liveSettings: true, rea: probe.rea, linkedRea: siteRun.rea.binding.status, derived: { spec: spec.obligations, tokens: tokens.total, exported: exported.count, mock: mocked.routes, check: checked.verdict, candidate: covered.candidate.verdict }, pck: pck.pck.counts.entries, unity: unityDetails.rows[0].blocksInfo.compression }));
+  console.log(JSON.stringify({ result: 'passed', version: probe.pluginVersion, visual, tools: 12, skill: skill.name, command: command.name, liveSettings: true, rea: probe.rea, linkedRea: siteRun.rea.binding.status, derived: { spec: spec.obligations, brief: brief.bytes > 0, tokens: tokens.total, exported: exported.count, mock: mocked.routes, check: checked.verdict, candidate: covered.candidate.verdict }, pck: pck.pck.counts.entries, unity: unityDetails.rows[0].blocksInfo.compression }));
 } finally {
   await ctx?.fiber.dispose();
   await rm(root, { recursive: true, force: true });

@@ -11,8 +11,9 @@ DSH 0.2.2-rc.5 的本地应用资产档案插件。把静态素材整理成可�
 3. `guoluo_dissect` 传档案 `id`，返回批次 `runId`、证据数量、覆盖说明、耗时与 REA 绑定结果。目录型素材会自动调用 REA 分析并把摘要绑定到本次素材的路径与根哈希；传 `"rea": false` 可跳过，`reaTimeoutMs` 可覆盖超时。APK、PCK、PE 与 Unity 素材只做静态解析，不触发 REA。
 4. `guoluo_dossier` 传 `id`，可选固定 `runId`、`kind`、`offset`、`limit`。通过 `nextOffset` 翻页。`kind: binary` 分页读 PE 与 Unity 逐文件明细；`kind: apk-permission` 与 `kind: apk-activity` 分页读 APK 清单里已落盘的权限与活动，旧批次只存首页时回执 `stale: true`，需要重新盘点才能看到后段。每页最多 50 条。超过 512 KiB 的证据行总量预算时，`clipped` 会说明原因，`nextOffset` 指向下一条。一条证据始终完整返回，单条超出预算时独占一页。
 5. `guoluo_spec`、`guoluo_tokens`、`guoluo_export` 把一批证据转成派生产物，默认取最新批次。
-6. `guoluo_check` 核对证据自洽性。传 `candidate: { "directory": "my-rebuild" }` 按规格核对候选工程目录里的素材、页面与令牌是否对得上（只看文件层，不看结构与行为）。传 `visual: { "candidateDirectory": "my-rebuild" }` 可核对默认入口的渲染差异。多页核对通过 `visual.routes` 指定基准和候选的 HTML 文件，每页比较 390、768、1440 三档宽度，高度固定为 900。
-7. `/guoluo list` 列档案，`/guoluo status <id>` 看状态；也可用 `guoluo_list`、`guoluo_status`。
+6. `guoluo_brief` 传 `id` 与必填的 `runId`，把这一批证据写成复刻交接单：先做哪些 HTML 入口、参考哪些素材与令牌、哪些声明有待确认、按什么顺序验收。它只写档案里的 `brief/<runId>.md`，不启动子代理、不生成工程。不能省略 `runId`——派生产物按批次固定，避免交接单悄悄换了依据。
+7. `guoluo_check` 核对证据自洽性。传 `candidate: { "directory": "my-rebuild" }` 按规格核对候选工程目录里的素材、页面与令牌是否对得上（只看文件层，不看结构与行为）。传 `visual: { "candidateDirectory": "my-rebuild" }` 可核对默认入口的渲染差异。多页核对通过 `visual.routes` 指定基准和候选的 HTML 文件，每页比较 390、768、1440 三档宽度，高度固定为 900。
+8. `/guoluo list` 列档案，`/guoluo status <id>` 看状态；也可用 `guoluo_list`、`guoluo_status`。
 
 随包提供 `guoluo-rebuild` 技能。档案索引和独立批次保存在档案根的 `<id>/target.json` 与 `<id>/runs/<runId>.json`。请使用单独的归档目录；不要在盘点时改动、移动或替换素材目录与档案目录中的条目。
 
@@ -25,6 +26,7 @@ DSH 0.2.2-rc.5 的本地应用资产档案插件。把静态素材整理成可�
 | `guoluo_spec` | `<id>/spec/spec.json`、`spec.md` | 复刻义务清单，每条带 `path:line` 证据与 `declared` 状态；冲突与缺口单列 |
 | `guoluo_tokens` | `<id>/tokens/tokens.css`、`tokens.tailwind.css`、`tokens.json` | 原样 CSS 变量、Tailwind v4 `@theme inline` 片段、机器清单 |
 | `guoluo_export` | `<id>/export/assets.{json,md,csv}` | 资产清单，可按类别过滤 |
+| `guoluo_brief` | `<id>/brief/<runId>.md` | 复刻交接单：入口、素材、令牌、待确认项与验收顺序；只读同一批次证据 |
 | `guoluo_mock` | `<id>/mock/mock.json`、`server.mjs` | 零依赖回放服务：静态链接回占位页，素材按素材根发原始字节，其余 404 |
 | `guoluo_check` | `<id>/checks/check-<ts>-<uuid>.json` | 覆盖度核对：漏项、悬空证据、与已落盘规格的批次偏差；可选候选工程覆盖度与视觉比对 |
 | `guoluo_check`（视觉） | `<id>/checks/check-<ts>-<uuid>/` 下的 `summary.json`、`r<n>-<w>-{before,after}.{artifact.json,png}`、`r<n>-<w>-diff.json` | 逐路由、逐视口的核对结果与截图证据 |

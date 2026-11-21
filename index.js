@@ -40,6 +40,7 @@ export function apply(ctx, config = {}) {
   add('dissect', '盘点本地静态素材（目录、HTML/CSS、ASAR、APK、Godot PCK、EXE/DLL、Unity 素材），目录型素材会调用 REA 分析 JavaScript 应用；APK、PCK、PE 与 Unity 只做静态解析；不运行目标应用。', { id, rea: { type: 'boolean' }, reaTimeoutMs: { type: 'integer', minimum: 10000, maximum: 1800000 } }, ['id'], projects.dissect, 1800000);
   add('dossier', '分页查看已落盘的证据行，可固定 runId 并筛选种类；kind=binary 分页读 PE 与 Unity 逐文件明细；kind=apk-permission / kind=apk-activity 按本批落盘的 APK 清单证据分页读权限与活动，旧批次只保留首页时会标记需重新盘点。', { id, runId: string(50), kind: enumeration('asset', 'token', 'navigation', 'reference', 'binary', 'apk-permission', 'apk-activity'), offset, limit }, ['id'], projects.dossier);
   add('spec', '把一批证据转成复刻义务账本：每条带证据位置，缺口单列。写到档案的 spec/ 目录。', { id, runId: string(50) }, ['id'], projects.spec);
+  add('brief', '从指定 runId 的归档证据导出复刻交接单，包含入口、素材、待确认事项和验收步骤；仅写档案，不启动代理或生成工程。', { id, runId: string(50) }, ['id', 'runId'], projects.brief);
   add('tokens', '导出设计令牌：tokens.css、Tailwind v4 主题片段和机器可读清单。写到档案的 tokens/ 目录。', { id, runId: string(50) }, ['id'], projects.tokens);
   add('export', '导出资产清单到档案的 export/ 目录，可选 json、markdown、csv。', { id, runId: string(50), format: { type: 'string', enum: ['json', 'markdown', 'csv'] }, kind: enumeration('asset', 'token', 'navigation', 'reference') }, ['id'], projects.export);
   add('mock', '按本批证据生成零依赖 mock 服务：静态链接回占位页，素材按素材根回放。只生成，不代为启动。', { id, runId: string(50), port: { type: 'integer', minimum: 1024, maximum: 65535 } }, ['id'], projects.mock);
@@ -59,7 +60,7 @@ export function apply(ctx, config = {}) {
   const body = skill.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/u, '');
   ctx.effect(() => ctx.skills.register({ name: 'guoluo-rebuild', description: summary, content: body, source: 'runtime', provider: name }));
   ctx.effect(() => ctx.commands.register({
-    name, description: '蜾蠃：检查配置、列档案、派生规格与令牌、生成 mock、核对覆盖度', input: { hint: 'probe | list | status <id> | spec <id> | tokens <id> | export <id> [json|markdown|csv] | mock <id> | check <id>' }, recordInput: false,
+    name, description: '蜾蠃：检查配置、列档案、导出交接单、生成 mock、核对覆盖度', input: { hint: 'probe | list | status <id> | spec <id> | brief <id> <runId> | tokens <id> | export <id> [json|markdown|csv] | mock <id> | check <id>' }, recordInput: false,
     async handler({ rawInput, signal }) {
       const [verb, target, format, ...rest] = (rawInput ?? '').trim().split(/\s+/u);
       try {
@@ -68,11 +69,12 @@ export function apply(ctx, config = {}) {
         else if (verb === 'list' && !target) result = await projects.list({}, signal);
         else if (verb === 'status' && target && !format && !rest.length) result = await projects.status({ id: target }, signal);
         else if (verb === 'spec' && target && !format && !rest.length) result = await projects.spec({ id: target }, signal);
+        else if (verb === 'brief' && target && format && !rest.length) result = await projects.brief({ id: target, runId: format }, signal);
         else if (verb === 'tokens' && target && !format && !rest.length) result = await projects.tokens({ id: target }, signal);
         else if (verb === 'export' && target && !rest.length) result = await projects.export({ id: target, ...(format ? { format } : {}) }, signal);
         else if (verb === 'mock' && target && !rest.length) result = await projects.mock({ id: target, ...(format ? { port: Number(format) } : {}) }, signal);
         else if (verb === 'check' && target && !format && !rest.length) result = await projects.check({ id: target }, signal);
-        else return { kind: verb ? 'error' : 'success', text: '蜾蠃 · /guoluo probe | list | status <id> | spec <id> | tokens <id> | export <id> [json|markdown|csv] | mock <id> [port] | check <id>。登记和盘点请用 guoluo_target_add、guoluo_dissect。' };
+        else return { kind: verb ? 'error' : 'success', text: '蜾蠃 · /guoluo probe | list | status <id> | spec <id> | brief <id> <runId> | tokens <id> | export <id> [json|markdown|csv] | mock <id> [port] | check <id>。登记和盘点请用 guoluo_target_add、guoluo_dissect。' };
         return { kind: 'success', text: JSON.stringify(result, null, 2) };
       } catch (error) {
         signal?.throwIfAborted();
