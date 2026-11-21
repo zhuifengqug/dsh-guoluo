@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, open, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { Config } from '../index.js';
 import { parsePe } from '../lib/pe.mjs';
 import { projectService } from '../lib/projects.mjs';
+import { buildSpec, renderSpecMarkdown } from '../lib/spec.mjs';
 
 const RVA = 0x1000;
 const RAW = 0x200;
@@ -23,12 +24,13 @@ function buildPe({
   exportNamesRva = 0x10f0,
   exportOrdinalsRva = 0x10f4,
   exportStringsRva = 0x10f8,
+  sectionSize = SECTION_SIZE,
 } = {}) {
   const optionalSize = wide ? 240 : 224;
   const directoryStart = wide ? 112 : 96;
   const directoryCountAt = directoryStart - 4;
   const sectionTable = 0x98 + optionalSize;
-  const size = RAW + SECTION_SIZE;
+  const size = RAW + sectionSize;
   const buffer = Buffer.alloc(size);
   buffer.write('MZ', 0, 'latin1');
   buffer.writeUInt32LE(0x80, 0x3c);
@@ -52,11 +54,11 @@ function buildPe({
   writeDir(0, exportRva, 40);
   writeDir(1, importRva, 40);
   writeDir(14, 0x1130, 72);
-  const inside = rva => rva >= RVA && rva + 64 < RVA + SECTION_SIZE;
+  const inside = rva => rva >= RVA && rva + 64 < RVA + sectionSize;
   buffer.write('.text', sectionTable, 'latin1');
-  buffer.writeUInt32LE(SECTION_SIZE, sectionTable + 8);
+  buffer.writeUInt32LE(sectionSize, sectionTable + 8);
   buffer.writeUInt32LE(RVA, sectionTable + 12);
-  buffer.writeUInt32LE(SECTION_SIZE, sectionTable + 16);
+  buffer.writeUInt32LE(sectionSize, sectionTable + 16);
   buffer.writeUInt32LE(RAW, sectionTable + 20);
   buffer.writeUInt32LE(0x60000020, sectionTable + 36);
   if (inside(RVA)) {
@@ -267,20 +269,91 @@ test('变长扫描只在本节 raw 范围内找终止符，跨节重叠即报错
   assert.match(mixedFacts.imports.reason, /节数据在文件中重叠/u);
 });
 
-test('两个不同序号共用同一函数地址槽位是合法别名导出，仍按 parsed 返回', async t => {
-  const file = await temp(t, buildPe({
+test('导出地址表只读取命名导出引用的 4 字节槽位', async t => {
+  const exportAddressRva = 0x2000;
+  const exportFunctions = 32768;
+  const exportOrdinals = [0, exportFunctions - 1];
+  const bytes = buildPe({
+    sectionSize: 0x22000,
+    exportNames: ['AliasA', 'AliasB'],
+    exportOrdinals,
+    exportFunctions,
+    exportAddressRva,
+    exportNamesRva: 0x10f0,
+    exportOrdinalsRva: 0x10f8,
+    exportStringsRva: 0x1100,
+  });
+  const tableStart = off(exportAddressRva);
+  const tableEnd = tableStart + exportFunctions * 4;
+  bytes.writeUInt32LE(RVA, tableEnd - 4);
+  const { file } = await temp(t, bytes);
+  const probe = await open(file, 'r');
+  const prototype = Object.getPrototypeOf(probe);
+  await probe.close();
+  const read = prototype.read;
+  const tableReads = [];
+  t.mock.method(prototype, 'read', function (buffer, offset, length, position) {
+    if (position < tableEnd && position + length > tableStart) tableReads.push([position, length]);
+    return read.call(this, buffer, offset, length, position);
+  });
+  const { exports } = await parsePe(file);
+  assert.equal(exports.status, 'parsed');
+  assert.deepEqual(exports.items.map(item => item.ordinal), [1, exportFunctions]);
+  assert.equal(exports.aliasSlots, 1);
+  assert.deepEqual(tableReads, [[tableStart, 4], [tableEnd - 4, 4]]);
+});
+
+test('不同导出槽位指向同一非零 RVA 时，盘点和规格记录一组别名', async t => {
+  const bytes = buildPe({
     exportNames: ['AliasA', 'AliasB'],
     exportOrdinals: [0, 1],
     exportFunctions: 2,
     exportNamesRva: 0x10f0,
     exportOrdinalsRva: 0x10f8,
     exportStringsRva: 0x1100,
-  }));
+  });
+  const file = await temp(t, bytes);
   const facts = await parsePe(file.file, new AbortController().signal);
   assert.equal(facts.exports.status, 'parsed');
-  // 两个名字各占一个序号、指向同一槽位（buildPe 把两个槽位都写成同一 RVA）。
+  // 两个名字对应不同序号，两个槽位都记录同一个非零 RVA。
   assert.deepEqual(facts.exports.items.map(item => item.ordinal), [1, 2]);
   assert.equal(facts.exports.aliasSlots, 1);
+
+  // 同一个文件走盘点 → 规格：别名槽位必须出现在可交叉核对的证据面与 markdown 表里。
+  const root = await mkdtemp(join(tmpdir(), 'guoluo-pe-alias-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const [sourceRoot, archiveRoot] = ['source', 'archive'].map(name => join(root, name));
+  await Promise.all([mkdir(sourceRoot), mkdir(archiveRoot)]);
+  await writeFile(join(sourceRoot, 'app.exe'), bytes);
+  const service = projectService(Config({ sourceRoot, archiveRoot, reaPath: join(root, 'missing.mjs') }));
+  const target = await service.add({ kind: 'local', location: 'app.exe' });
+  const run = await service.dissect({ id: target.id, rea: false });
+  const spec = await service.spec({ id: target.id, runId: run.runId });
+  const specJson = JSON.parse(await readFile(spec.files.json, 'utf8'));
+  const specMarkdown = await readFile(spec.files.markdown, 'utf8');
+  assert.equal(specJson.evidence.pe.aliasSlotsNamedLimit, 128);
+  assert.equal(specJson.evidence.pe.files[0].aliasSlots, 1);
+  assert.equal(specJson.evidence.pe.files[0].namedExports, 2);
+  const dossier = await service.dossier({ id: target.id, runId: run.runId, kind: 'binary' });
+  assert.equal(dossier.rows[0].exports.aliasSlots, 1);
+  assert.match(specMarkdown, /前 128 个命名导出.*至少两个不同槽位.*同一非零 RVA/u);
+  assert.match(specMarkdown, /\| 别名槽位 \|/u);
+  assert.match(specMarkdown, /\| app\.exe \| pe32\+ \| x64 \| windows-cui \| 1 \| DEMO\.dll \| 2 \| 1 \| 声明 \|/u);
+});
+
+test('规格保留缺失与不可读的别名统计为 null，并区分实测的 0', () => {
+  const run = { pe: [
+    { path: 'legacy.dll', status: 'parsed', exports: { status: 'parsed', namedCount: 2 } },
+    { path: 'absent.dll', status: 'parsed', exports: { status: 'absent', namedCount: 0 } },
+    { path: 'exports-unreadable.dll', status: 'parsed', exports: { status: 'unreadable' } },
+    { path: 'unreadable.dll', status: 'unreadable' },
+    { path: 'measured.dll', status: 'parsed', exports: { status: 'parsed', namedCount: 1, aliasSlots: 0 } },
+  ] };
+  const built = buildSpec({ run, label: 'PE 别名统计' });
+  assert.deepEqual(built.spec.evidence.pe.files.map(file => file.aliasSlots), [null, null, null, null, 0]);
+  const markdown = renderSpecMarkdown(built);
+  assert.match(markdown, /\| legacy\.dll \|.*\| 2 \| 未观测 \| 无 \|/u);
+  assert.match(markdown, /\| measured\.dll \|.*\| 1 \| 0 \| 无 \|/u);
 });
 
 test('导出函数地址槽位越界或序号表重复序号时标记 unreadable', async t => {
