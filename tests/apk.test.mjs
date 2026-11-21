@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, open, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, open, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { deflateRawSync } from 'node:zlib';
-import { Config } from '../index.js';
+import { apply, Config } from '../index.js';
 import { manifestFacts, parseManifest, readEntry, readZip } from '../lib/apk.mjs';
 import { projectService } from '../lib/projects.mjs';
 
@@ -269,8 +269,17 @@ test('APK 只按中央目录与二进制清单做静态盘点', async t => {
   assert.equal(manifest.minSdk, 24);
   assert.equal(manifest.targetSdk, 34);
   assert.equal(manifest.launcherActivity, '.MainActivity');
-  assert.deepEqual(manifest.permissions, ['android.permission.INTERNET']);
-  assert.deepEqual(manifest.activities, ['.Alias', '.MainActivity']);
+  // dissect 只回摘要（数量与预算），逐条清单走 dossier 的专用类别。
+  assert.equal(manifest.permissions.total, 1);
+  assert.equal(manifest.permissions.retained, 1);
+  assert.equal(manifest.permissions.truncated, false);
+  assert.equal(manifest.activities.retained, 2);
+  const permissionRows = await service.dossier({ id: target.id, kind: 'apk-permission' });
+  assert.deepEqual(permissionRows.rows, [{ kind: 'apk-permission', name: 'android.permission.INTERNET' }]);
+  assert.equal(permissionRows.total, 1);
+  assert.equal(permissionRows.nextOffset, null);
+  const activityRows = await service.dossier({ id: target.id, kind: 'apk-activity' });
+  assert.deepEqual(activityRows.rows.map(row => row.name), ['.Alias', '.MainActivity']);
   assert.deepEqual(run.apk.abis, ['arm64-v8a']);
   assert.equal(run.apk.counts.dex, 2);
   assert.equal(run.apk.counts.libs, 1);
@@ -332,9 +341,10 @@ test('长字符串按 UTF-16 长度前缀读取，权限先去重再截断，十
   assert.equal(run.apk.manifestStatus, 'parsed');
   assert.equal(run.apk.manifest.versionName, longName);
   assert.equal(run.apk.manifest.versionCode, 0x2a);
-  assert.deepEqual(run.apk.manifest.permissions, ['android.permission.CAMERA', 'android.permission.INTERNET']);
-  assert.equal(run.apk.manifest.permissionsTotal, 2);
-  assert.equal(run.apk.manifest.permissionsTruncated, false);
+  const permissions = await service.dossier({ id: target.id, kind: 'apk-permission' });
+  assert.deepEqual(permissions.rows.map(row => row.name), ['android.permission.CAMERA', 'android.permission.INTERNET']);
+  assert.equal(run.apk.manifest.permissions.total, 2);
+  assert.equal(run.apk.manifest.permissions.truncated, false);
 });
 
 test('缺少清单时 manifestStatus 标为 absent', async t => {
@@ -439,11 +449,12 @@ test('UTF-8 字符串池的变长长度前缀支持超过 128 字符的非 ASCII
   assert.equal(run.apk.manifestStatus, 'parsed');
   assert.equal(run.apk.manifest.versionName, longName);
   assert.equal(run.apk.manifest.package, 'com.example.utf8');
-  assert.deepEqual(run.apk.manifest.permissions, [longPermission]);
+  const permissions = await service.dossier({ id: target.id, kind: 'apk-permission' });
+  assert.deepEqual(permissions.rows.map(row => row.name), [longPermission]);
 });
 
-test('权限与活动按页返回，超出首页标记截断并可续页', async t => {
-  const { sourceRoot, service } = await setup(t);
+test('权限与活动随批次落盘，dossier 按 offset/limit 续页读第二页', async t => {
+  const { sourceRoot, archiveRoot, service } = await setup(t);
   const permissions = Array.from({ length: 70 }, (_, index) => `android.permission.P${String(index).padStart(2, '0')}`);
   const activities = Array.from({ length: 70 }, (_, index) => `.Act${String(index).padStart(2, '0')}`);
   const plan = [['start', 'manifest', [['package', 'str', 'com.example.page']]]];
@@ -458,40 +469,204 @@ test('权限与活动按页返回，超出首页标记截断并可续页', async
   const target = await service.add({ kind: 'local', location: 'page.apk' });
   const run = await service.dissect({ id: target.id });
 
-  assert.equal(run.apk.manifest.permissions.length, 64);
-  assert.equal(run.apk.manifest.permissions[0], permissions[0]);
-  assert.deepEqual(run.apk.manifest.permissionsPage, { offset: 0, limit: 64, total: 70, returned: 64, nextOffset: 64, truncated: true });
-  assert.equal(run.apk.manifest.permissionsTruncated, true);
-  assert.equal(run.apk.manifest.activities.length, 64);
-  assert.equal(run.apk.manifest.activitiesPage.total, 70);
-  assert.equal(run.apk.manifest.activitiesPage.nextOffset, 64);
+  // dissect 只回摘要；整批清单落在批次文件里。
+  assert.equal(run.apk.manifestStatus, 'parsed');
+  assert.equal(run.apk.manifest.permissions.total, 70);
+  assert.equal(run.apk.manifest.permissions.retained, 70);
+  assert.equal(run.apk.manifest.permissions.truncated, false);
+  assert.equal(run.apk.manifest.activities.retained, 70);
+  assert.equal(run.apk.manifest.permissions.label, '权限');
+  assert.match(run.apk.detail, /guoluo_dossier kind=apk-permission/u);
+  const persisted = JSON.parse(await readFile(join(archiveRoot, target.id, 'runs', `${run.runId}.json`), 'utf8'));
+  assert.equal(persisted.apk.manifest.permissions.length, 70);
+  assert.equal(persisted.apk.manifest.permissionsTotal, 70);
+  assert.equal(persisted.apk.manifest.permissionsRetained, 70);
 
-  const next = manifestFacts(data, undefined, { permissions: { offset: 64 }, activities: { offset: 64 } });
-  assert.equal(next.permissions.length, 6);
-  assert.equal(next.permissions[0], permissions[64]);
-  assert.deepEqual(next.permissionsPage, { offset: 64, limit: 64, total: 70, returned: 6, nextOffset: null, truncated: false });
-  assert.equal(next.activities.length, 6);
-  assert.equal(next.activitiesPage.truncated, false);
-  assert.throws(() => manifestFacts(data, undefined, { permissions: { offset: -1 } }), /分页偏移无效/u);
+  const first = await service.dossier({ id: target.id, runId: run.runId, kind: 'apk-permission', limit: 20 });
+  assert.equal(first.rows.length, 20);
+  assert.deepEqual(first.rows[0], { kind: 'apk-permission', name: permissions[0] });
+  assert.equal(first.total, 70);
+  assert.equal(first.retained, 70);
+  assert.equal(first.nextOffset, 20);
+  assert.equal(first.truncated, true);
+  assert.equal(first.incomplete, false);
+  assert.equal(first.stale, false);
+
+  const second = await service.dossier({ id: target.id, runId: run.runId, kind: 'apk-permission', offset: 64, limit: 50 });
+  assert.equal(second.rows.length, 6);
+  assert.equal(second.rows[0].name, permissions[64]);
+  assert.equal(second.rows.at(-1).name, permissions[69]);
+  assert.equal(second.total, 70);
+  assert.equal(second.retained, 70);
+  assert.equal(second.nextOffset, null);
+  assert.equal(second.truncated, false);
+  assert.equal(second.reInventoryRequired, false);
+
+  const acts = await service.dossier({ id: target.id, runId: run.runId, kind: 'apk-activity', offset: 64 });
+  assert.equal(acts.rows.length, 6);
+  assert.equal(acts.rows[0].name, activities[64]);
 
   const spec = await service.spec({ id: target.id, runId: run.runId });
-  const { readFile } = await import('node:fs/promises');
   const json = JSON.parse(await readFile(spec.files.json, 'utf8'));
   assert.equal(json.evidence.apk.manifestStatus, 'parsed');
-  assert.equal(json.evidence.apk.permissions.total, 70);
-  assert.equal(json.evidence.apk.permissions.returned, 64);
-  assert.equal(json.evidence.apk.permissions.truncated, true);
-  assert.equal(json.evidence.apk.activities.nextOffset, 64);
+  assert.deepEqual(json.evidence.apk.permissions, { total: 70, retained: 70, truncated: false, note: null });
+  assert.equal(json.evidence.apk.activities.total, 70);
   const markdown = await readFile(spec.files.markdown, 'utf8');
-  assert.match(markdown, /APK 权限 \| 第 1–64 条 \/ 共 70 条（有后续页，offset 64）/u);
+  assert.match(markdown, /APK 权限 \| 共 70 条，已保留 70 条/u);
   assert.match(markdown, /APK 清单状态 \| parsed/u);
 
-  // 分页返回只带一页资产，清单状态与分页元数据仍随头部返回。
+  // 普通资产分页形态不变，摘要照样随头部返回。
   const assets = await service.dossier({ id: target.id, kind: 'asset', limit: 1 });
   assert.equal(assets.rows.length, 1);
   assert.equal(assets.apk.manifestStatus, 'parsed');
-  assert.equal(assets.apk.manifest.permissionsPage.total, 70);
-  assert.equal(assets.apk.manifest.activitiesPage.truncated, true);
+  assert.equal(assets.apk.manifest.permissions.total, 70);
+
+  // 续页只读落盘批次：素材删掉后第二页仍然可读。
+  await rm(join(sourceRoot, 'page.apk'));
+  const after = await service.dossier({ id: target.id, runId: run.runId, kind: 'apk-permission', offset: 64 });
+  assert.equal(after.rows.length, 6);
+  assert.equal(after.rows.at(-1).name, permissions[69]);
+
+  // 保留预算的注入点：条数上限先到先停，原始总数与保留数分开记。
+  const kept = manifestFacts(data, undefined, { permissions: { limit: 8 }, activities: { bytes: 1024 } });
+  assert.equal(kept.permissions.length, 8);
+  assert.equal(kept.permissionsTotal, 70);
+  assert.equal(kept.permissionsRetained, 8);
+  assert.equal(kept.permissionsTruncated, true);
+  assert.match(kept.permissionsNote, /按 8 条上限保留前 8 条/u);
+  assert.equal(kept.activities.length, 70);
+  assert.throws(() => manifestFacts(data, undefined, { permissions: { limit: 0 } }), /保留条数无效/u);
+  assert.throws(() => manifestFacts(data, undefined, { activities: { bytes: 0 } }), /保留字节预算无效/u);
+  await assert.rejects(service.dossier({ id: target.id, kind: 'apk-permission', limit: 51 }), /分页每次 1–50 条/u);
+  await assert.rejects(service.dossier({ id: target.id, kind: 'unknown-kind' }), /未知证据类别/u);
+});
+
+test('清单保留按条数预算截断，原始总数与真实可读下页分开标记', async t => {
+  const { sourceRoot, service } = await setup(t);
+  const permissions = Array.from({ length: 300 }, (_, index) => `android.permission.R${String(index).padStart(3, '0')}`);
+  const plan = [['start', 'manifest', [['package', 'str', 'com.example.budget']]]];
+  for (const name of permissions) plan.push(['start', 'uses-permission', [['name', 'str', name]]], ['end', 'uses-permission']);
+  plan.push(['end', 'manifest']);
+  await writeFile(join(sourceRoot, 'budget.apk'), buildZip([{ name: 'AndroidManifest.xml', data: buildAxml(plan) }]));
+  const target = await service.add({ kind: 'local', location: 'budget.apk' });
+  const run = await service.dissect({ id: target.id });
+
+  assert.equal(run.apk.manifest.permissions.total, 300);
+  assert.equal(run.apk.manifest.permissions.retained, 256);
+  assert.equal(run.apk.manifest.permissions.truncated, true);
+  assert.match(run.apk.manifest.permissions.note, /需重新盘点/u);
+  assert.ok(run.notes.some(note => note.includes('保留前 256 条')));
+
+  const page = await service.dossier({ id: target.id, runId: run.runId, kind: 'apk-permission', offset: 250, limit: 20 });
+  assert.equal(page.rows.length, 6);
+  assert.equal(page.rows[0].name, permissions[250]);
+
+  // 保留数之后没有可读页：不伪造条目，明确标原始总数与已保留数。
+  const exhausted = await service.dossier({ id: target.id, runId: run.runId, kind: 'apk-permission', offset: 256 });
+  assert.equal(exhausted.rows.length, 0);
+  assert.equal(exhausted.total, 300);
+  assert.equal(exhausted.retained, 256);
+  assert.equal(exhausted.nextOffset, null);
+  assert.equal(exhausted.truncated, false);
+  assert.equal(exhausted.incomplete, true);
+  assert.equal(exhausted.reInventoryRequired, true);
+  assert.match(exhausted.note, /需重新盘点/u);
+
+  const spec = await service.spec({ id: target.id, runId: run.runId });
+  const json = JSON.parse(await readFile(spec.files.json, 'utf8'));
+  assert.equal(json.evidence.apk.permissions.total, 300);
+  assert.equal(json.evidence.apk.permissions.retained, 256);
+  assert.equal(json.evidence.apk.permissions.truncated, true);
+  const markdown = await readFile(spec.files.markdown, 'utf8');
+  assert.match(markdown, /APK 权限 \| 共 300 条，已保留 256 条（其余需重新盘点）/u);
+});
+
+test('旧批次只保留清单首页时标记需重新盘点，不伪造后续页', async t => {
+  const { sourceRoot, archiveRoot, service } = await setup(t);
+  const permissions = Array.from({ length: 70 }, (_, index) => `android.permission.L${String(index).padStart(2, '0')}`);
+  const activities = ['.OldMain', '.OldAlias'];
+  const plan = [['start', 'manifest', [['package', 'str', 'com.example.legacy']]]];
+  for (const name of permissions) plan.push(['start', 'uses-permission', [['name', 'str', name]]], ['end', 'uses-permission']);
+  for (const name of activities) plan.push(['start', 'activity', [['name', 'str', name]]], ['end', 'activity']);
+  plan.push(['end', 'manifest']);
+  await writeFile(join(sourceRoot, 'legacy.apk'), buildZip([{ name: 'AndroidManifest.xml', data: buildAxml(plan) }]));
+  const target = await service.add({ kind: 'local', location: 'legacy.apk' });
+  const run = await service.dissect({ id: target.id });
+
+  // 把批次改写成旧形状：只存首页 64 条，元数据放在 permissionsPage/activitiesPage。
+  const file = join(archiveRoot, target.id, 'runs', `${run.runId}.json`);
+  const data = JSON.parse(await readFile(file, 'utf8'));
+  const manifest = data.apk.manifest;
+  for (const field of ['permissions', 'activities']) {
+    for (const suffix of ['Total', 'Retained', 'Bytes', 'Note', 'Truncated']) delete manifest[`${field}${suffix}`];
+  }
+  manifest.permissions = manifest.permissions.slice(0, 64);
+  manifest.permissionsPage = { offset: 0, limit: 64, total: 70, returned: 64, nextOffset: 64, truncated: true };
+  manifest.activitiesPage = { offset: 0, limit: 64, total: 2, returned: 2, nextOffset: null, truncated: false };
+  await writeFile(file, JSON.stringify(data));
+
+  const first = await service.dossier({ id: target.id, runId: run.runId, kind: 'apk-permission', limit: 50 });
+  assert.equal(first.stale, true);
+  assert.equal(first.reInventoryRequired, true);
+  assert.equal(first.total, 70);
+  assert.equal(first.retained, 64);
+  assert.equal(first.rows.length, 50);
+  assert.equal(first.rows[0].name, permissions[0]);
+  assert.match(first.note, /只保留权限首页（64 条），后续页需重新盘点/u);
+  assert.equal(first.apk.manifest.permissions.retained, 64);
+  assert.equal(first.apk.manifest.permissions.truncated, true);
+
+  // 首页之后没有落盘证据：返回空页并继续标记，绝不回读素材根。
+  const beyond = await service.dossier({ id: target.id, runId: run.runId, kind: 'apk-permission', offset: 64 });
+  assert.equal(beyond.rows.length, 0);
+  assert.equal(beyond.nextOffset, null);
+  assert.equal(beyond.stale, true);
+  assert.equal(beyond.retained, 64);
+
+  const acts = await service.dossier({ id: target.id, runId: run.runId, kind: 'apk-activity' });
+  assert.deepEqual(acts.rows.map(row => row.name), [...activities].sort());
+  assert.equal(acts.stale, true);
+  assert.equal(acts.total, 2);
+  assert.equal(acts.truncated, false);
+
+  const spec = await service.spec({ id: target.id, runId: run.runId });
+  const json = JSON.parse(await readFile(spec.files.json, 'utf8'));
+  assert.deepEqual(json.evidence.apk.permissions, { total: 70, retained: 64, truncated: true, note: null });
+  const markdown = await readFile(spec.files.markdown, 'utf8');
+  assert.match(markdown, /APK 权限 \| 共 70 条，已保留 64 条（其余需重新盘点）/u);
+});
+
+test('工具入口注册 APK 权限与活动类别并返回第二页', async t => {
+  const { root, sourceRoot, archiveRoot } = await setup(t);
+  const permissions = Array.from({ length: 70 }, (_, index) => `android.permission.T${String(index).padStart(2, '0')}`);
+  const plan = [['start', 'manifest', [['package', 'str', 'com.example.tool']]]];
+  for (const name of permissions) plan.push(['start', 'uses-permission', [['name', 'str', name]]], ['end', 'uses-permission']);
+  plan.push(['end', 'manifest']);
+  await writeFile(join(sourceRoot, 'tool.apk'), buildZip([{ name: 'AndroidManifest.xml', data: buildAxml(plan) }]));
+  const live = Config({ sourceRoot, archiveRoot, reaPath: join(root, 'missing.mjs') });
+  const tools = new Map();
+  apply({
+    effect: fn => fn(),
+    tools: { register: tool => tools.set(tool.name, tool) },
+    skills: { register: () => {} },
+    commands: { register: () => {} },
+  }, live);
+  const write = Symbol.for('cosmokit.volatile.write');
+  live.sourceRoot[write](sourceRoot);
+  live.archiveRoot[write](archiveRoot);
+  const schema = tools.get('guoluo_dossier').parameters;
+  assert.deepEqual(schema.properties.kind.enum, ['asset', 'token', 'navigation', 'reference', 'binary', 'apk-permission', 'apk-activity']);
+  const exec = { signal: new AbortController().signal };
+  const added = await tools.get('guoluo_target_add').execute({ kind: 'local', location: 'tool.apk' }, exec);
+  const run = await tools.get('guoluo_dissect').execute({ id: added.id, rea: false }, exec);
+  assert.equal(run.apk.manifest.permissions.total, 70);
+  const second = await tools.get('guoluo_dossier').execute({ id: added.id, kind: 'apk-permission', offset: 64, limit: 50 }, exec);
+  assert.equal(second.rows.length, 6);
+  assert.equal(second.rows[0].name, permissions[64]);
+  assert.equal(second.nextOffset, null);
+  assert.equal(second.total, 70);
+  const plain = await tools.get('guoluo_dossier').execute({ id: added.id, kind: 'asset' }, exec);
+  assert.equal(plain.apk.manifestStatus, 'parsed');
 });
 
 test('存储与 deflate 条目的实际长度必须与中央目录记录一致', async t => {
