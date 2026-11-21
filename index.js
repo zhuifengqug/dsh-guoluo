@@ -1,6 +1,7 @@
 import Schema from '@deepseek-ai/schemastery';
 import { readFileSync } from 'node:fs';
 import { projectService } from './lib/projects.mjs';
+import { checkTimeoutMs } from './lib/visual.mjs';
 
 export const name = 'guoluo';
 export const inject = ['tools', 'commands', 'skills', 'settings'];
@@ -50,7 +51,7 @@ export function apply(ctx, config = {}) {
       }, additionalProperties: false } },
       channelThreshold: { type: 'integer', minimum: 0, maximum: 255 },
     }, required: ['candidateDirectory'], additionalProperties: false },
-  }, ['id'], projects.check, 210000);
+  }, ['id'], projects.check, checkTimeoutMs);
   add('list', '列出已登记的蜾蠃档案。', { offset, limit }, [], projects.list);
   add('status', '查看某个档案最近的盘点和批次数。', { id }, ['id'], projects.status);
   const skill = readFileSync(new URL('./skills/guoluo-rebuild/SKILL.md', import.meta.url), 'utf8');

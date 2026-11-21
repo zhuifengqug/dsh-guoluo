@@ -9,7 +9,8 @@ import { promisify } from 'node:util';
 import { deflateSync } from 'node:zlib';
 import { projectService } from '../lib/projects.mjs';
 import { comparePng, decodePng } from '../lib/png.mjs';
-import { maxRoutes, thresholdNote } from '../lib/visual.mjs';
+import { checkTimeoutMs, maxRoutes, thresholdNote } from '../lib/visual.mjs';
+import { apply } from '../index.js';
 import { comparePages, height, serveStaticPage, visualMetrics, visualPage, widths } from '../lib/visual.mjs';
 
 const execFileAsync = promisify(execFile);
@@ -40,7 +41,7 @@ function pngChunk(type, data) {
   tail.writeUInt32BE(crc32(Buffer.concat([Buffer.from(type, 'latin1'), data])), 0);
   return Buffer.concat([head, data, tail]);
 }
-function encodePng({ width, height: tall, colorType = 6, bitDepth = 8, interlace = 0, color = [0, 0, 0, 255] }) {
+function encodePng({ width, height: tall, colorType = 6, bitDepth = 8, interlace = 0, color = [0, 0, 0, 255], rowColors, transparentKey }) {
   const channels = colorType === 6 ? 4 : 3;
   const sample = bitDepth === 16 ? 2 : 1;
   const row = 1 + width * channels * sample;
@@ -49,8 +50,9 @@ function encodePng({ width, height: tall, colorType = 6, bitDepth = 8, interlace
     for (let x = 0; x < width; x += 1) {
       for (let c = 0; c < channels; c += 1) {
         const at = y * row + 1 + (x * channels + c) * sample;
-        raw[at] = color[c];
-        if (sample === 2) raw[at + 1] = color[c];
+        const value = (rowColors?.[x] ?? color)[c];
+        raw[at] = value;
+        if (sample === 2) raw[at + 1] = value;
       }
     }
   }
@@ -58,10 +60,16 @@ function encodePng({ width, height: tall, colorType = 6, bitDepth = 8, interlace
   ihdr.writeUInt32BE(width, 0);
   ihdr.writeUInt32BE(tall, 4);
   ihdr[8] = bitDepth; ihdr[9] = colorType; ihdr[10] = 0; ihdr[11] = 0; ihdr[12] = interlace;
-  return Buffer.concat([pngSignature, pngChunk('IHDR', ihdr), pngChunk('IDAT', deflateSync(raw)), pngChunk('IEND', Buffer.alloc(0))]);
+  const chunks = [pngSignature, pngChunk('IHDR', ihdr)];
+  if (transparentKey) {
+    const data = Buffer.alloc(6);
+    transparentKey.forEach((value, index) => data.writeUInt16BE(value, index * 2));
+    chunks.push(pngChunk('tRNS', data));
+  }
+  return Buffer.concat([...chunks, pngChunk('IDAT', deflateSync(raw)), pngChunk('IEND', Buffer.alloc(0))]);
 }
 
-async function fixture(t, { launch, rea } = {}) {
+async function fixture(t, { launch, rea, createBudgetSignal } = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'guoluo-visual-'));
   t.after(() => rm(dir, { recursive: true, force: true, maxRetries: 5 }));
   const source = join(dir, 'source');
@@ -75,14 +83,14 @@ async function fixture(t, { launch, rea } = {}) {
   await writeFile(join(source, 'candidate', 'about.html'), `${candidate}<h1>about</h1>`);
   await writeFile(join(source, 'candidate2', 'index.html'), `${original}<h1>other</h1>`);
   await writeFile(join(source, 'candidate2', 'about.html'), `${original}<h1>other about</h1>`);
-  const service = projectService({ sourceRoot: source, archiveRoot: archive, chromiumPath: process.env.GUOLUO_TEST_CHROMIUM, reaPath: rea ?? process.env.GUOLUO_TEST_REA, launch });
+  const service = projectService({ sourceRoot: source, archiveRoot: archive, chromiumPath: process.env.GUOLUO_TEST_CHROMIUM, reaPath: rea ?? process.env.GUOLUO_TEST_REA, launch, createBudgetSignal });
   const { id } = await service.add({ kind: 'local', location: 'original' });
   const { runId } = await service.dissect({ id, rea: false });
-  return { id, runId, service, source };
+  return { id, runId, service, source, archive };
 }
 
 // A fake browser that answers /__state so the fake REA can bind to the served viewport.
-async function fakeLaunch(profileDir) {
+async function fakeLaunch(profileDir, { afterGoto } = {}) {
   const { createServer } = await import('node:http');
   const state = { url: '', origin: '', width: 0, height: 0, targetId: 'A'.repeat(32) };
   let closed = false;
@@ -91,7 +99,14 @@ async function fakeLaunch(profileDir) {
   await writeFile(join(profileDir, 'DevToolsActivePort'), `${server.address().port}\n`);
   const page = {
     setViewportSize: async ({ width, height: tall }) => { state.width = width; state.height = tall; },
-    goto: async url => { const response = await fetch(url); state.url = url; state.origin = new URL(url).origin; return { status: () => response.status }; },
+    goto: async url => {
+      const response = await fetch(url);
+      await response.arrayBuffer();
+      state.url = url;
+      state.origin = new URL(url).origin;
+      await afterGoto?.(state);
+      return { status: () => response.status };
+    },
     url: () => state.url,
   };
   return {
@@ -207,6 +222,115 @@ test('取消时关闭浏览器、删除隔离 profile 与半成品目录', async
   assert(!left.includes('browser'));
 });
 
+test('外部取消会清理项目检查目录内已写入的半成品', async t => {
+  const controller = new AbortController();
+  const reason = new Error('取消视觉核对');
+  let handle;
+  let hadArtifacts = false;
+  const launch = async profile => {
+    handle = await fakeLaunch(profile, { afterGoto: async ({ width }) => {
+      if (width === widths[1]) {
+        hadArtifacts = (await readdir(join(profile, '..'))).includes('r1-390-diff.json');
+        controller.abort(reason);
+      }
+    } });
+    return handle;
+  };
+  const { id, runId, service, archive } = await fixture(t, { launch, rea: fakeRea });
+  await assert.rejects(service.check({ id, runId, visual: { candidateDirectory: 'candidate' } }, controller.signal), error => error === reason);
+  assert.equal(hadArtifacts, true);
+  assert.equal(handle.closed, true);
+  assert.deepEqual(await readdir(join(archive, id, 'checks')), []);
+});
+
+test('总预算截断时保留已验证路由，在途与未开始路由标为 budget 并落盘', async t => {
+  const budget = new AbortController();
+  let limit;
+  let handle;
+  const launch = async profile => {
+    let aboutLoads = 0;
+    handle = await fakeLaunch(profile, { afterGoto: ({ url }) => {
+      if (new URL(url).pathname === '/about.html' && ++aboutLoads === 2) budget.abort();
+    } });
+    return handle;
+  };
+  const { id, runId, service } = await fixture(t, { launch, rea: fakeRea, createBudgetSignal: ms => { limit = ms; return budget.signal; } });
+  const { visual } = await service.check({ id, runId, visual: { candidateDirectory: 'candidate', routes: [
+    {}, { baselineEntry: 'about.html' }, { baselineEntry: 'index.html', candidateEntry: 'about.html' }, { baselineEntry: 'ghost.html' },
+  ] } });
+  assert.equal(visual.status, 'blocked');
+  assert.equal(visual.kind, 'budget');
+  assert.deepEqual(visual.routes.map(route => route.kind ?? route.status), ['verified', 'budget', 'budget', 'invalid-input']);
+  assert.deepEqual(visual.routes[0].rounds.map(round => round.status), ['verified', 'verified', 'verified']);
+  assert.equal(visual.routes[0].score, 0);
+  assert.deepEqual(visual.routes[1].rounds.map(round => round.kind), ['budget']);
+  assert.equal(visual.routes[1].score, null);
+  assert.deepEqual(visual.routes[2].rounds, []);
+  assert.match(visual.routes[2].reason, /未开始测量/u);
+  assert.equal(limit, 355_000);
+  assert.equal(handle.closed, true);
+  assert(!(await readdir(visual.directory)).includes('browser'));
+  const saved = JSON.parse(await readFile(join(visual.directory, 'summary.json'), 'utf8'));
+  assert.deepEqual(saved.routes.map(route => route.kind ?? route.status), ['verified', 'budget', 'budget', 'invalid-input']);
+  assert.equal(saved.routes[0].score, 0);
+});
+
+test('check 注册的宿主超时覆盖最大视觉预算并留出清理时间', async t => {
+  const registered = new Map();
+  const register = tool => registered.set(tool.name, tool);
+  apply({ effect: callback => callback(), tools: { register }, skills: { register }, commands: { register } });
+  let maxBudget;
+  const { source } = await fixture(t);
+  const dir = await mkdtemp(join(tmpdir(), 'guoluo-visual-budget-'));
+  t.after(() => rm(dir, { recursive: true, force: true, maxRetries: 5 }));
+  const baseline = await visualPage(join(source, 'original'), 'index.html');
+  const candidate = await visualPage(join(source, 'candidate'), 'index.html');
+  const result = await comparePages({ routes: Array.from({ length: maxRoutes }, () => ({ baseline, candidate })), dir, reaPath: fakeRea,
+    createBudgetSignal: ms => { maxBudget = ms; return AbortSignal.abort(); } });
+  assert.equal(result.routes.length, maxRoutes);
+  assert.ok(result.routes.every(route => route.kind === 'budget' && route.score === null));
+  assert.equal(registered.get('guoluo_check').timeoutMs, checkTimeoutMs);
+  assert.equal(checkTimeoutMs - maxBudget, 60_000);
+  assert.deepEqual(await readdir(dir), []);
+});
+
+test('素材变化和静态读取预算耗尽各自封锁路由分数', async t => {
+  const { source } = await fixture(t);
+  const dir = await mkdtemp(join(tmpdir(), 'guoluo-visual-resources-'));
+  t.after(() => rm(dir, { recursive: true, force: true, maxRetries: 5 }));
+  const original = join(source, 'original');
+  const candidateRoot = join(source, 'candidate');
+  const css = join(original, 'app.css');
+  await writeFile(css, 'body { color: black }');
+  await writeFile(join(candidateRoot, 'budget.css'), Buffer.alloc(8 * 1024 * 1024 + 1));
+  const routes = [
+    { baseline: await visualPage(original, 'index.html'), candidate: await visualPage(candidateRoot, 'index.html') },
+    { baseline: await visualPage(original, 'about.html'), candidate: await visualPage(candidateRoot, 'about.html') },
+  ];
+  const responses = [];
+  const launch = profile => fakeLaunch(profile, { afterGoto: async ({ url, origin, width }) => {
+    if (new URL(url).pathname === '/index.html') {
+      const response = await fetch(`${origin}/app.css`);
+      await response.arrayBuffer();
+      responses.push(response.status);
+      if (width === widths[0]) await writeFile(css, 'body { color: red }');
+    } else {
+      const response = await fetch(`${origin}/budget.css`);
+      await response.arrayBuffer();
+      responses.push(response.status);
+    }
+  } });
+  const { status, routes: results } = await comparePages({ routes, dir, reaPath: fakeRea, launch });
+  assert.equal(status, 'blocked');
+  assert.ok(responses.includes(429));
+  assert.deepEqual(results.map(route => route.kind), ['changed-asset', 'budget']);
+  for (const route of results) {
+    assert.equal(route.score, null);
+    assert.equal(route.worstWidth, null);
+    assert.deepEqual(route.rounds.map(round => round.status), ['verified', 'verified', 'verified']);
+  }
+});
+
 test('真实 REA 在三档视口记录差异、哈希和可复查的 PNG', { skip: !process.env.GUOLUO_TEST_REA, timeout: 120000 }, async t => {
   const { id, runId, service } = await fixture(t);
   const result = await service.check({ id, runId, visual: { candidateDirectory: 'candidate' } });
@@ -249,6 +373,21 @@ test('PNG 解码器独立展开 RGB/RGBA，并只统计逐通道差值超阈值�
   assert.throws(() => comparePng(rgba, encodePng({ width: 4, height: 2, color: [10, 20, 30, 255] })), /尺寸不同/u);
 });
 
+test('RGB 的 tRNS 透明键只改变匹配样点的 alpha', () => {
+  const rgb = encodePng({ width: 2, height: 1, colorType: 2, rowColors: [[10, 20, 30], [10, 20, 31]], transparentKey: [10, 20, 30] });
+  const rgba = encodePng({ width: 2, height: 1, rowColors: [[10, 20, 30, 0], [10, 20, 31, 255]] });
+  assert.equal(comparePng(rgb, rgba).changedPixels, 0);
+  assert.equal(comparePng(rgba, rgb).maximumChannelDelta, 0);
+});
+
+test('PNG 拒绝未知关键块与 IEND 后的数据，允许未知辅助块', () => {
+  const png = encodePng({ width: 1, height: 1 });
+  const withChunk = name => Buffer.concat([png.subarray(0, 33), pngChunk(name, Buffer.alloc(0)), png.subarray(33)]);
+  assert.throws(() => decodePng(withChunk('VgLO')), { code: 'unsupported-png' });
+  assert.equal(decodePng(withChunk('vgLO')).width, 1);
+  assert.throws(() => decodePng(Buffer.concat([png, Buffer.from([0])])), /IEND.*文件末尾/u);
+});
+
 test('PNG 解码器对位深、颜色类型、隔行与损坏块明确报不支持', () => {
   const unsupported = pattern => error => error.code === 'unsupported-png' && pattern.test(error.message);
   assert.throws(() => decodePng(encodePng({ width: 2, height: 2, bitDepth: 16 })), unsupported(/16/u));
@@ -278,7 +417,7 @@ test('多路由各按三档测量、文件名带路由序号互不覆盖，并�
     assert.equal(route.rounds.length, 3);
     assert.equal(route.status, 'verified');
     assert.deepEqual(route.rounds.map(round => round.width), widths);
-    assert.ok(Number.isFinite(route.score));
+    assert.equal(route.score, Number((1 - Math.max(...route.rounds.map(round => round.computed.changedRatio))).toFixed(6)));
     assert.ok(widths.includes(route.worstWidth));
     for (const round of route.rounds) {
       assert.equal(round.status, 'verified');
@@ -331,6 +470,7 @@ test('篡改 REA 差异数字时该档记 conflict 并并列两边数值，其�
   }
   assert.equal(measured.routes[0].status, 'conflict');
   assert.equal(measured.routes[1].status, 'conflict');
+  assert.ok(measured.routes.every(route => route.score === null && route.worstWidth === null));
   assert.match(measured.reason, /不一致/u);
 });
 
