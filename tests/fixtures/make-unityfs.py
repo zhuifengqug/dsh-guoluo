@@ -1,8 +1,6 @@
-"""用 UnityPy（独立实现）写出一份 UnityFS 样例并回读校验。
+"""生成 UnityFS v6 无压缩和 v7 尾置 LZ4 夹具，并用 UnityPy 回读。
 
-产物：tests/fixtures/unityfs-none.bundle
-目的：让 JS 解析器面对一份由第三方实现生成、并由第三方实现证明可读的 UnityFS 头，
-而不是只面对自己写的合成夹具。
+v6 用 struct 拼装，v7 用 UnityPy BundleFile.save() 写出。
 """
 import struct
 import sys
@@ -77,6 +75,17 @@ def main() -> int:
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(data)
     print(f"written {target} {len(data)} bytes, verified by UnityPy")
+    bundle = BundleFile(EndianBinaryReader(data), None)
+    bundle.version = 7
+    bundle._uses_block_alignment = True
+    compressed = bundle.save("lz4")
+    reloaded = BundleFile(EndianBinaryReader(compressed), None)
+    assert reloaded.version == 7
+    assert int(reloaded.dataflags) == 0xC2
+    assert reloaded.files[NODE_PATH].bytes == NODE_DATA
+    compressed_target = target.with_name("unityfs-lz4-tail.bundle")
+    compressed_target.write_bytes(compressed)
+    print(f"written {compressed_target} {len(compressed)} bytes, verified by UnityPy")
     return 0
 
 

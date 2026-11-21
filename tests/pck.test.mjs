@@ -127,6 +127,39 @@ test('PCK 盘点把条目登记为归档素材并写入规格与 mock 说明', a
   assert.ok(mockConfig.unreplayed.some(item => item.value === 'icon.png' && /PCK 归档成员/u.test(item.reason)));
 });
 
+test('PCK 超预算或目录不可读时保留声明，特殊条目单独计数', async t => {
+  for (const [packFlags, maxFiles, status] of [[0, 0, 'budget-exceeded'], [1, 1, 'encrypted'], [4, 1, 'sparse']]) {
+    const bytes = buildPck({ packFlags, entries: [{ path: 'icon.png', size: 4 }] });
+    const { file } = await temp(t, bytes);
+    const facts = await readPck(file, bytes.length, { maxFiles });
+    assert.equal(facts.directoryStatus, status);
+    assert.deepEqual(facts.counts, { entries: 1 });
+    assert.equal(facts.declaredBytes, null);
+    assert.deepEqual(facts.files, []);
+  }
+  const bytes = buildPck({ entries: [
+    { path: 'image.png', size: 4, flags: 1 },
+    { path: 'gone.png', size: 0, flags: 2 },
+    { path: 'delta.png', size: 0, flags: 4 },
+  ] });
+  const { file } = await temp(t, bytes);
+  const facts = await readPck(file, bytes.length);
+  assert.deepEqual(facts.counts, { entries: 3, encrypted: 1, directories: 0, scenes: 0, scripts: 0, resources: 1, removed: 1, delta: 1 });
+  assert.deepEqual(facts.files.map(({ path, encrypted }) => ({ path, encrypted })), [{ path: 'image.png', encrypted: true }]);
+});
+
+test('Godot PCKPacker 生成的零字节条目可落在目录起点', async () => {
+  const path = fileURLToPath(new URL('./fixtures/godot-4.7.2-empty.pck', import.meta.url));
+  const bytes = await readFile(path);
+  const directoryOffset = Number(bytes.readBigUInt64LE(32));
+  const pck = await readPck(path, bytes.length);
+  assert.equal(directoryOffset, 160);
+  assert.equal(pck.declaredBytes, '32');
+  assert.deepEqual(pck.files.map(({ path, bytes, offset }) => [path, bytes, offset]), [
+    ['aligned.txt', 32, 128], ['empty.txt', 0, directoryOffset],
+  ]);
+});
+
 test('原生 Godot 4.7.2 导出的包格式 4 被如实读出', async () => {
   const path = fileURLToPath(new URL('./fixtures/godot-4.7.2.pck', import.meta.url));
   const { size } = await stat(path);

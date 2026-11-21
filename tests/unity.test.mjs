@@ -37,7 +37,7 @@ test('识别 Unity 素材文件而不抢走其它扩展名', () => {
   }
 });
 
-test('UnityPy 写下并由 UnityPy 回读的 UnityFS 头被一致读出', async () => {
+test('仓库生成并经 UnityPy 回读的 UnityFS v6 头被一致读出', async () => {
   const bytes = await stock('unityfs-none.bundle');
   const facts = await inspectUnityHeader(fileURLToPath(fixture('unityfs-none.bundle')), bytes.length, 'unity-bundle');
   assert.deepEqual(facts, {
@@ -49,6 +49,39 @@ test('UnityPy 写下并由 UnityPy 回读的 UnityFS 头被一致读出', async 
     flags: 64,
     blocksInfo: { compressedBytes: 71, uncompressedBytes: 71, compressionCode: 0, compression: 'none', atEnd: false },
   });
+});
+
+test('UnityPy 保存的 v7 头区分尾置 LZ4 压缩前后的长度', async () => {
+  const bytes = await stock('unityfs-lz4-tail.bundle');
+  const facts = await inspectUnityHeader(fileURLToPath(fixture('unityfs-lz4-tail.bundle')), bytes.length, 'unity-bundle');
+  assert.equal(facts.formatVersion, 7);
+  assert.equal(facts.declaredSize, '135');
+  assert.equal(facts.flags, 194);
+  assert.deepEqual(facts.blocksInfo, { compressedBytes: 41, uncompressedBytes: 71, compressionCode: 2, compression: 'lz4', atEnd: true });
+});
+
+test('UnityFS 对前置和尾置块信息都计入头部对齐', async () => {
+  const dir = await scratch();
+  for (const { format, revision, flags } of [
+    { format: 7, revision: '2021.3.16f1', flags: 64 },
+    { format: 7, revision: '2021.3.16f1', flags: 194 },
+    { format: 6, revision: '2019.4.15f1', flags: 64 },
+  ]) {
+    const prefix = Buffer.concat([Buffer.from('UnityFS\0'), Buffer.alloc(4), Buffer.from(`5.x.x\0${revision}\0`)]);
+    prefix.writeUInt32BE(format, 8);
+    const headerEnd = prefix.length + 20;
+    assert.notEqual(headerEnd % 16, 0);
+    const lengthWithoutPadding = headerEnd + 41;
+    const bytes = Buffer.alloc(lengthWithoutPadding);
+    prefix.copy(bytes);
+    bytes.writeBigUInt64BE(BigInt(bytes.length), prefix.length);
+    bytes.writeUInt32BE(41, prefix.length + 8);
+    bytes.writeUInt32BE(71, prefix.length + 12);
+    bytes.writeUInt32BE(flags, prefix.length + 16);
+    const path = join(dir, `v${format}-${flags}.bundle`);
+    await writeFile(path, bytes);
+    await assert.rejects(inspectUnityHeader(path, bytes.length, 'unity-bundle'), /元数据块范围越界/u);
+  }
 });
 
 test('IL2CPP 元数据只取头标识与声明版本', async () => {
@@ -77,7 +110,7 @@ test('坏头、越界声明与读取期变化都被拒绝', async () => {
   truncated.write('UnityFS\0', 0, 'latin1');
   truncated.writeUInt32BE(6, 8);
   await writeFile(join(dir, 'truncated.bundle'), truncated);
-  await assert.rejects(inspectUnityHeader(join(dir, 'truncated.bundle'), truncated.length, 'unity-bundle'), /终止符|控制字符|不完整|越界/u);
+  await assert.rejects(inspectUnityHeader(join(dir, 'truncated.bundle'), truncated.length, 'unity-bundle'), /版本字符串缺终止符/u);
 
   const notIl2cpp = Buffer.from('notil2cpp', 'latin1');
   await writeFile(join(dir, 'global-metadata.dat'), notIl2cpp);
@@ -132,5 +165,30 @@ test('目录盘点登记 Unity 素材行、头部证据、规格与不回放说�
   const mock = await service.mock({ id: added.id, runId: run.runId, port: 5199 });
   const config = JSON.parse(await readFile(mock.files.config, 'utf8'));
   assert.deepEqual(config.unreplayed.map(item => item.value).sort(), ['assets/desktop.bundle', 'global-metadata.dat']);
-  assert.ok(config.unreplayed.every(item => item.reason.includes('Unity 素材仅有头部证据')));
+  assert.ok(config.unreplayed.every(item => item.reason === 'Unity 候选素材未纳入回放'));
+});
+
+test('Unity 盘点分别记录读头失败和预算跳过', async () => {
+  const root = await scratch();
+  const sourceRoot = join(root, 'source');
+  const archiveRoot = join(root, 'archive');
+  const build = join(sourceRoot, 'build');
+  await mkdir(build, { recursive: true });
+  await mkdir(archiveRoot);
+  const sample = await stock('unityfs-none.bundle');
+  await Promise.all(Array.from({ length: 18 }, (_, index) =>
+    writeFile(join(build, `candidate-${index}.bundle`), index < 3 ? 'invalid' : sample)));
+  const service = projectService({ sourceRoot, archiveRoot });
+  const { id } = await service.add({ kind: 'local', location: 'build' });
+  const run = await service.dissect({ id, rea: false });
+  const details = await service.dossier({ id, kind: 'binary' });
+  assert.equal(run.coverage.skippedUnityHeaders, 2);
+  assert.equal(run.coverage.clipped, true);
+  assert.equal(run.totals.asset, 18);
+  assert.equal(details.rows.length, 16);
+  assert.ok(details.rows.some(row => row.status === 'unreadable'));
+  const mock = await service.mock({ id });
+  const config = JSON.parse(await readFile(mock.files.config, 'utf8'));
+  assert.equal(config.unreplayed.length, 18);
+  assert.ok(config.unreplayed.every(item => item.reason === 'Unity 候选素材未纳入回放'));
 });

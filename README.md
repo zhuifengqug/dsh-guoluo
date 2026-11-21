@@ -9,7 +9,7 @@ DSH 0.2.2-rc.5 的本地应用资产档案插件。把静态素材整理成可�
 1. `/guoluo probe` 检查配置与 REA CLI。
 2. `guoluo_target_add` 登记 `{ "kind": "local", "location": "my-export" }`。位置相对于素材根；目录、单个 HTML/CSS、Electron `.asar`、Android `.apk`、Godot `.pck`、Windows `.exe`/`.dll`，以及 Unity 的 `global-metadata.dat` 或 `.bundle`/`.unity3d` 都可以。
 3. `guoluo_dissect` 传档案 `id`，返回批次 `runId`、证据数量、覆盖说明、耗时与 REA 绑定结果。目录型素材会自动调用 REA 分析并把摘要绑定到本次素材的路径与根哈希；传 `"rea": false` 可跳过，`reaTimeoutMs` 可覆盖超时。APK、PCK、PE 与 Unity 素材只做静态解析，不触发 REA。
-4. `guoluo_dossier` 传 `id`，可选固定 `runId`、`kind`、`offset`、`limit`。通过 `nextOffset` 翻页。`kind: binary` 分页读 PE 与 Unity 逐文件明细。一页最多 50 条且受 512 KiB 序列化上限约束；被截断时 `clipped` 会说明，`nextOffset` 接着往下翻，条目不丢。
+4. `guoluo_dossier` 传 `id`，可选固定 `runId`、`kind`、`offset`、`limit`。通过 `nextOffset` 翻页。`kind: binary` 分页读 PE 与 Unity 逐文件明细。每页最多 50 条。超过 512 KiB 的证据行总量预算时，`clipped` 会说明原因，`nextOffset` 指向下一条。一条证据始终完整返回，单条超出预算时独占一页。
 5. `guoluo_spec`、`guoluo_tokens`、`guoluo_export` 把一批证据转成派生产物，默认取最新批次。
 6. `guoluo_check` 核对证据自洽性；传 `visual: { "candidateDirectory": "my-rebuild" }` 时再用 REA 比较基准与候选的三档视口（390 / 768 / 1440 宽，900 高），把「像不像」量化成变化像素比例。
 7. `/guoluo list` 列档案，`/guoluo status <id>` 看状态；也可用 `guoluo_list`、`guoluo_status`。
@@ -43,13 +43,10 @@ DSH 0.2.2-rc.5 的本地应用资产档案插件。把静态素材整理成可�
 - **ASAR**：只看包头里的目录和登记大小，不验证归档成员或解包内容。要读 HTML/CSS 的证据，请单独登记已经导出的目录。
 - **APK**：只按 ZIP 中央目录和二进制 `AndroidManifest.xml` 做静态解析——包名、`versionCode`/`versionName`、min/target SDK、权限、activity 与启动入口、原生 ABI，以及 `res/`、`assets/` 里可识别的图片/字体/音视频条目与 dex/so/签名的计数。`manifestStatus` 标明清单是 `parsed`、`absent`、`unreadable` 还是 `parse-failed`。不解压资源内容、不校验签名、不运行应用；APK 内的素材条目只登记、不回放。
 - **EXE/DLL**：解析 DOS/COFF/可选头、节表、导入 DLL 与函数名（或序号）、导出名与序号、CLR 目录标记，进入规格的「原生二进制」表。不反编译、不解析资源与证书、不运行二进制；二进制条目只登记、不回放。
-- **Godot PCK**：按引擎真实的包格式读头部与文件表——`pack_format` 1–4、`pack_flags`、`file_base`、v3/v4 的
-  `dir_offset`、每条的路径补零、`offset`/`size`、MD5 与 per-entry flags（`removed`/`delta` 跳过）。加密或稀疏目录
-  只记头部与声明条目数。不解压条目、不解密、不运行游戏。
+- **Godot PCK**：读取独立 PCK 的头部与文件表，支持包格式 1–4，记录引擎版本、条目大小、加密标志和场景／脚本／资源计数。加密、稀疏或超预算的目录只记录头部与声明条目数。加密条目的实际存储范围未核验。
 - **Unity**：只核对两处头部。`UnityFS` 读签名、格式版本、Unity 版本串、声明包长、块信息压缩方式与是否在尾部；
   `global-metadata.dat` 读 IL2CPP 标识与声明版本。包内资产、节点表内容与元数据表都不在本批证据内；Unity 素材只
   登记、不回放。
-- **Godot PCK**：只读包头与文件表——引擎版本（`Godot 4.2.1`）、包格式、条目清单、加密标记、场景/脚本/资源计数；可识别的条目按归档素材登记。不解压条目内容、不解密加密条目、不解析场景与脚本结构、不运行游戏；PCK 内条目只登记、不回放。
 - **URL**：只保存出处，不发请求、不打开页面。原 URL 的查询参数和片段不会保存。
 - **REA**：探测 CLI 版本；对目录型素材自动跑 `analyze-javascript-application`，把证据包写到 `<id>/rea/<runId>/evidence.json`，并用八项检查确认摘要与本次素材绑定——证据 id 形状、证据包可读、父操作类型、父记录里的素材路径、根哈希自洽、摘要与父记录根哈希一致、证据文件字节数一致。绑定不通过时判 `mismatch`，不给行为侧结论。
 - **视觉核对**：显式传 `visual` 时，用 REA 的 `list-browser-targets`、`capture-web-screenshot`、`compare-web-screenshots` 比较基准与候选的三档静态视口，产物落盘可复查。需要本机 Chrome 或 Edge（或配置 `chromiumPath`）。
@@ -62,6 +59,4 @@ DSH 0.2.2-rc.5 的本地应用资产档案插件。把静态素材整理成可�
 
 需要 Node.js 22 或以上。`npm ci` 后用 `npm run check` 运行回归并核对打包清单；默认回归用内置的假 REA 与假浏览器覆盖整条视觉管线，无需真实 Chrome。`GUOLUO_TEST_REA=<rea 可执行路径>` 会额外跑真实 REA 的截图与比对用例（需本机 Chrome）。`node tests/host-smoke.mjs <DSH node_modules> <包目录>` 在隔离 profile 里真实加载。提交与验证约定见 [AGENTS.md](AGENTS.md)。此项目使用 MIT 许可。
 
-`tests/fixtures/godot-4.7.2.pck` 由 Godot 4.7.2 自带的 `PCKPacker` 直接导出；`tests/fixtures/unityfs-none.bundle`
-由 `tests/fixtures/make-unityfs.py` 写出并经 UnityPy 1.25.4 回读校验。两份夹具都不由插件自己的写入代码生成，
-所以它们能反过来检验解析器。
+Godot 4.7.2 的 `PCKPacker` 生成了普通条目和零字节条目两份夹具。[UnityFS v6 夹具](tests/fixtures/unityfs-none.bundle) 由仓库脚本拼装，再用 UnityPy 1.25.4 回读。[UnityFS v7 夹具](tests/fixtures/unityfs-lz4-tail.bundle) 由 UnityPy 保存并回读，使用尾置 LZ4 块信息。

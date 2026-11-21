@@ -1,6 +1,6 @@
 // Run against the installed DSH packages and an unpacked npm tarball, never the desktop profile.
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
@@ -98,7 +98,19 @@ try {
   const siteRun = await call('dissect', { id: siteId });
   assert.equal(siteRun.rea.status, 'analyzed');
   assert.equal(siteRun.rea.binding.status, 'verified');
-  console.log(JSON.stringify({ result: 'passed', tools: 11, skill: skill.name, command: command.name, liveSettings: true, rea: probe.rea, linkedRea: siteRun.rea.binding.status, derived: { spec: spec.obligations, tokens: tokens.total, exported: exported.count, mock: mocked.routes, check: checked.verdict } }));
+  await copyFile(new URL('./fixtures/godot-4.7.2-empty.pck', import.meta.url), join(sourceRoot, 'sample.pck'));
+  const { id: pckId } = await call('target_add', { kind: 'local', location: 'sample.pck' });
+  const pck = await call('dissect', { id: pckId });
+  assert.equal(pck.pck.directoryStatus, 'parsed');
+  assert.equal(pck.pck.counts.entries, 2);
+  await copyFile(new URL('./fixtures/unityfs-lz4-tail.bundle', import.meta.url), join(sourceRoot, 'sample.bundle'));
+  const { id: unityId } = await call('target_add', { kind: 'local', location: 'sample.bundle' });
+  const unity = await call('dissect', { id: unityId });
+  const unityDetails = await call('dossier', { id: unityId, runId: unity.runId, kind: 'binary' });
+  assert.equal(unity.unity.headersRead, 1);
+  assert.equal(unityDetails.rows[0].blocksInfo.compressedBytes, 41);
+  assert.equal(unityDetails.rows[0].blocksInfo.atEnd, true);
+  console.log(JSON.stringify({ result: 'passed', version: probe.pluginVersion, tools: 11, skill: skill.name, command: command.name, liveSettings: true, rea: probe.rea, linkedRea: siteRun.rea.binding.status, derived: { spec: spec.obligations, tokens: tokens.total, exported: exported.count, mock: mocked.routes, check: checked.verdict }, pck: pck.pck.counts.entries, unity: unityDetails.rows[0].blocksInfo.compression }));
 } finally {
   await ctx?.fiber.dispose();
   await rm(root, { recursive: true, force: true });
