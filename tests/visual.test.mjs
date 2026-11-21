@@ -474,6 +474,31 @@ test('篡改 REA 差异数字时该档记 conflict 并并列两边数值，其�
   assert.match(measured.reason, /不一致/u);
 });
 
+test('REA 的平均或峰值通道差值与自算不符时同样记 conflict', async t => {
+  const { source } = await fixture(t);
+  for (const [env, field] of [['GUOLUO_FAKE_FORCE_MEAN', 'meanAbsoluteChannelDelta'], ['GUOLUO_FAKE_FORCE_PEAK', 'maximumChannelDelta']]) {
+    const dir = await mkdtemp(join(tmpdir(), 'guoluo-visual-extra-'));
+    t.after(() => rm(dir, { recursive: true, force: true, maxRetries: 5 }));
+    const previous = process.env[env];
+    process.env[env] = '1';
+    let measured;
+    try {
+      measured = await comparePages({ baseline: await visualPage(join(source, 'original'), 'index.html'),
+        candidate: await visualPage(join(source, 'candidate'), 'index.html'), dir, reaPath: fakeRea, channelThreshold: 0, launch: fakeLaunch });
+    } finally {
+      if (previous === undefined) delete process.env[env];
+      else process.env[env] = previous;
+    }
+    const round = measured.rounds[0];
+    assert.equal(round.status, 'conflict', `${env} 应触发冲突`);
+    assert.equal(round.conflict.field, field);
+    assert.deepEqual(round.conflict.fields, [field]);
+    assert.equal(round.conflict.computed, round.computed[field]);
+    assert.equal(measured.status, 'blocked');
+    assert.equal(measured.routes[0].score, null);
+  }
+});
+
 test('非 8 位 PNG 让该档 blocked 并标记 unsupported-png，不再猜数值', async t => {
   const { source } = await fixture(t);
   const dir = await mkdtemp(join(tmpdir(), 'guoluo-visual-depth-'));

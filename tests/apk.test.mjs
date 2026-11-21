@@ -543,7 +543,7 @@ test('权限与活动随批次落盘，dossier 按 offset/limit 续页读第二�
 
 test('清单保留按条数预算截断，原始总数与真实可读下页分开标记', async t => {
   const { sourceRoot, service } = await setup(t);
-  const permissions = Array.from({ length: 300 }, (_, index) => `android.permission.R${String(index).padStart(3, '0')}`);
+  const permissions = Array.from({ length: 600 }, (_, index) => `android.permission.R${String(index).padStart(3, '0')}`);
   const plan = [['start', 'manifest', [['package', 'str', 'com.example.budget']]]];
   for (const name of permissions) plan.push(['start', 'uses-permission', [['name', 'str', name]]], ['end', 'uses-permission']);
   plan.push(['end', 'manifest']);
@@ -551,21 +551,21 @@ test('清单保留按条数预算截断，原始总数与真实可读下页分�
   const target = await service.add({ kind: 'local', location: 'budget.apk' });
   const run = await service.dissect({ id: target.id });
 
-  assert.equal(run.apk.manifest.permissions.total, 300);
-  assert.equal(run.apk.manifest.permissions.retained, 256);
+  assert.equal(run.apk.manifest.permissions.total, 600);
+  assert.equal(run.apk.manifest.permissions.retained, 512);
   assert.equal(run.apk.manifest.permissions.truncated, true);
   assert.match(run.apk.manifest.permissions.note, /需重新盘点/u);
-  assert.ok(run.notes.some(note => note.includes('保留前 256 条')));
+  assert.ok(run.notes.some(note => note.includes('保留前 512 条')));
 
-  const page = await service.dossier({ id: target.id, runId: run.runId, kind: 'apk-permission', offset: 250, limit: 20 });
+  const page = await service.dossier({ id: target.id, runId: run.runId, kind: 'apk-permission', offset: 506, limit: 20 });
   assert.equal(page.rows.length, 6);
-  assert.equal(page.rows[0].name, permissions[250]);
+  assert.equal(page.rows[0].name, permissions[506]);
 
   // 保留数之后没有可读页：不伪造条目，明确标原始总数与已保留数。
-  const exhausted = await service.dossier({ id: target.id, runId: run.runId, kind: 'apk-permission', offset: 256 });
+  const exhausted = await service.dossier({ id: target.id, runId: run.runId, kind: 'apk-permission', offset: 512 });
   assert.equal(exhausted.rows.length, 0);
-  assert.equal(exhausted.total, 300);
-  assert.equal(exhausted.retained, 256);
+  assert.equal(exhausted.total, 600);
+  assert.equal(exhausted.retained, 512);
   assert.equal(exhausted.nextOffset, null);
   assert.equal(exhausted.truncated, false);
   assert.equal(exhausted.incomplete, true);
@@ -574,11 +574,11 @@ test('清单保留按条数预算截断，原始总数与真实可读下页分�
 
   const spec = await service.spec({ id: target.id, runId: run.runId });
   const json = JSON.parse(await readFile(spec.files.json, 'utf8'));
-  assert.equal(json.evidence.apk.permissions.total, 300);
-  assert.equal(json.evidence.apk.permissions.retained, 256);
+  assert.equal(json.evidence.apk.permissions.total, 600);
+  assert.equal(json.evidence.apk.permissions.retained, 512);
   assert.equal(json.evidence.apk.permissions.truncated, true);
   const markdown = await readFile(spec.files.markdown, 'utf8');
-  assert.match(markdown, /APK 权限 \| 共 300 条，已保留 256 条（其余需重新盘点）/u);
+  assert.match(markdown, /APK 权限 \| 共 600 条，已保留 512 条（其余需重新盘点）/u);
 });
 
 test('旧批次只保留清单首页时标记需重新盘点，不伪造后续页', async t => {

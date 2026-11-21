@@ -109,8 +109,9 @@ try {
   assert.equal(unity.unity.headersRead, 1);
   assert.equal(unityDetails.rows[0].blocksInfo.compressedBytes, 41);
   assert.equal(unityDetails.rows[0].blocksInfo.atEnd, true);
-  assert.equal(unityDetails.rows[0].blocksInfo.status, 'unobserved');
-  assert.equal(unityDetails.rows[0].nodes, null);
+  assert.equal(unityDetails.rows[0].blocksInfo.status, 'parsed');
+  assert.equal(unityDetails.rows[0].blocksInfo.compression, 'lz4');
+  assert.deepEqual(unityDetails.rows[0].nodes.items, [{ index: 0, path: 'assets/demo/data', offset: 0, size: 14, flags: 4 }]);
   await copyFile(new URL('./fixtures/unityfs-none.bundle', import.meta.url), join(sourceRoot, 'uncompressed.bundle'));
   const { id: uncompressedId } = await call('target_add', { kind: 'local', location: 'uncompressed.bundle' });
   const { runId: uncompressedRunId } = await call('dissect', { id: uncompressedId });

@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import { readFile, stat, writeFile } from 'node:fs/promises';
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { deflateSync } from 'node:zlib';
+import { deflateSync, inflateSync } from 'node:zlib';
 
 const argv = process.argv.slice(2);
 const option = name => { const index = argv.indexOf(name); return index === -1 ? undefined : argv[index + 1]; };
@@ -41,6 +41,56 @@ function chunk(type, data) {
 // Uniform-color RGBA image. The color is a function of the URL, so the two local
 // servers differ per pixel when their ports differ; GUOLUO_FAKE_SAME_IMAGE pins the
 // color so both sides are byte-identical.
+// Decode the uniform RGBA fixture back to raw samples so this fake reports the same
+// changed-pixel count, peak channel delta and mean absolute delta a real decoder sees.
+function samples(bytes) {
+  const width = bytes.readUInt32BE(16);
+  const height = bytes.readUInt32BE(20);
+  const bitDepth = bytes[24];
+  const colorType = bytes[25];
+  const sample = bitDepth === 16 ? 2 : 1;
+  const channels = colorType === 6 ? 4 : 3;
+  const idat = [];
+  for (let at = 8; at < bytes.length;) {
+    const length = bytes.readUInt32BE(at);
+    const type = bytes.toString('latin1', at + 4, at + 8);
+    if (type === 'IDAT') idat.push(bytes.subarray(at + 8, at + 8 + length));
+    if (type === 'IEND') break;
+    at += 12 + length;
+  }
+  const raw = inflateSync(Buffer.concat(idat));
+  const stride = width * channels * sample;
+  const pixels = Buffer.alloc(width * height * channels * sample);
+  for (let y = 0; y < height; y += 1) {
+    const filter = raw[y * (stride + 1)];
+    if (filter !== 0) throw new Error(`假浏览器只生成不滤波的 PNG，收到 filter ${filter}。`);
+    raw.copy(pixels, y * stride, y * (stride + 1) + 1, y * (stride + 1) + 1 + stride);
+  }
+  return { width, height, channels, sample, pixels };
+}
+
+function diff(beforePng, afterPng, threshold) {
+  const before = samples(beforePng);
+  const after = samples(afterPng);
+  const pixels = before.width * before.height;
+  const samplesPerPixel = before.channels * before.sample;
+  let changed = 0;
+  let maximum = 0;
+  let total = 0;
+  for (let index = 0; index < pixels; index += 1) {
+    let peak = 0;
+    const base = index * samplesPerPixel;
+    for (let at = 0; at < samplesPerPixel; at += 1) {
+      const delta = Math.abs(before.pixels[base + at] - after.pixels[base + at]);
+      total += delta;
+      if (delta > peak) peak = delta;
+    }
+    if (peak > maximum) maximum = peak;
+    if (peak > threshold) changed += 1;
+  }
+  return { width: before.width, height: before.height, pixels, changed, maximum, mean: total / (pixels * 4) };
+}
+
 function png({ width, height, seed }) {
   const bitDepth = Number(process.env.GUOLUO_FAKE_PNG_DEPTH ?? 8);
   const same = process.env.GUOLUO_FAKE_SAME_IMAGE === '1';
@@ -123,17 +173,22 @@ if (verb === 'list-browser-targets') {
     const after = JSON.parse(await readFile(files[at + 1], 'utf8'));
     const beforePng = Buffer.from(before.data_base64, 'base64');
     const afterPng = Buffer.from(after.data_base64, 'base64');
-    const width = beforePng.readUInt32BE(16);
-    const height = beforePng.readUInt32BE(20);
-    const pixels = width * height;
-    // Uniform-color images differ in every pixel or in none, so all-or-none matches the
-    // plugin's per-pixel recompute; GUOLUO_FAKE_FORCE_CHANGED overrides it to provoke a conflict.
-    const changed = forced === null ? (before.data_base64 === after.data_base64 ? 0 : pixels) : Math.max(0, Math.min(pixels, forced));
+    const measured = diff(beforePng, afterPng, threshold);
+    const { width, height, pixels } = measured;
+    // GUOLUO_FAKE_FORCE_CHANGED overrides only the changed-pixel count so tests can
+    // provoke a conflict; peak and mean stay what a real decoder would report.
+    const changed = forced === null ? measured.changed : Math.max(0, Math.min(pixels, forced));
+    const forcedPeak = process.env.GUOLUO_FAKE_FORCE_PEAK === undefined ? null : Number(process.env.GUOLUO_FAKE_FORCE_PEAK);
+    const forcedMean = process.env.GUOLUO_FAKE_FORCE_MEAN === undefined ? null : Number(process.env.GUOLUO_FAKE_FORCE_MEAN);
+    // The overrides shift the reported number by a delta so peak stays >= mean and any
+    // drift from the plugin's recompute is what the conflict path has to catch.
+    const peak = forcedPeak === null ? measured.maximum : Math.min(255, measured.maximum + forcedPeak);
+    const mean = forcedMean === null ? measured.mean : measured.mean + forcedMean;
     console.log(JSON.stringify({ evidence_id: evidenceId(`diff:${before.sha256}:${after.sha256}`), operation: 'compare_web_screenshots',
       parameters: { before_artifact_sha256: before.sha256, after_artifact_sha256: after.sha256, channel_threshold: threshold },
       normalized_result: { before: { width, height }, after: { width, height }, channel_threshold: threshold,
         status: changed ? 'different' : 'identical', compared_pixels: pixels, changed_pixels: changed, changed_ratio: changed / pixels,
-        maximum_channel_delta: changed ? 255 : 0, mean_absolute_channel_delta: changed ? 255 : 0, limitations: [] } }));
+        maximum_channel_delta: peak, mean_absolute_channel_delta: mean, limitations: [] } }));
   }
 } else {
   throw new Error(`unknown verb ${verb}`);

@@ -123,27 +123,34 @@ test('UnityPy 独立写入并回读的无压缩表与插件逐项一致', async 
   assert.deepEqual(codecCounts, { none: 1 });
 });
 
-test('尾置 LZ4 块信息及压缩前后等长的非零 codec 均未解压', async () => {
+test('尾置 LZ4 块信息由插件自行解压，LZMA 与 LZHAM 仍标未观测', async () => {
   const bytes = await stock('unityfs-lz4-tail.bundle');
   const facts = await inspectUnityHeader(fileURLToPath(fixture('unityfs-lz4-tail.bundle')), bytes.length, 'unity-bundle');
   assert.equal(facts.formatVersion, 7);
   assert.equal(facts.declaredSize, '135');
   assert.equal(facts.flags, 194);
-  assert.deepEqual(facts.blocksInfo, {
-    compressedBytes: 41, uncompressedBytes: 71, compressionCode: 2, compression: 'lz4', atEnd: true, status: 'unobserved',
-  });
-  assert.equal(facts.blocks, null);
-  assert.equal(facts.nodes, null);
-  assert.match(facts.reason, /lz4.*未解压/u);
+  assert.equal(facts.blocksInfo.compressionCode, 2);
+  assert.equal(facts.blocksInfo.compressedBytes, 41);
+  assert.equal(facts.blocksInfo.uncompressedBytes, 71);
+  assert.equal(facts.blocksInfo.atEnd, true);
+  assert.equal(facts.blocksInfo.status, 'parsed');
+  assert.deepEqual(facts.nodes.items, [{ index: 0, path: 'assets/demo/data', offset: 0, size: 14, flags: 4 }]);
 
   const dir = await scratch();
-  for (const [codec, name] of [[1, 'lzma'], [2, 'lz4'], [3, 'lz4hc'], [4, 'lzham']]) {
-    const sameSize = await inspectFixture(dir, `${name}.bundle`, unityfs({ codec, nodes: [['not-against-codec', 0, 4]] }));
-    assert.equal(sameSize.blocksInfo.compressedBytes, sameSize.blocksInfo.uncompressedBytes);
-    assert.equal(sameSize.blocksInfo.compression, name);
-    assert.equal(sameSize.nodes, null);
-    assert.match(sameSize.reason, /未解压/u);
+  for (const [codec, name] of [[1, 'lzma'], [4, 'lzham']]) {
+    const unsupported = await inspectFixture(dir, `${name}.bundle`, unityfs({ codec, nodes: [['not-against-codec', 0, 4]] }));
+    assert.equal(unsupported.blocksInfo.compression, name);
+    assert.equal(unsupported.blocksInfo.status, 'unobserved');
+    assert.equal(unsupported.nodes, null);
+    assert.match(unsupported.reason, /暂未支持/u);
   }
+});
+
+test('LZ4 块信息自称压缩却解不开时明确报错，不返回半张表', async () => {
+  const dir = await scratch();
+  // 压缩段里放的不是合法 LZ4 流：必须抛错，而不是把截断的表当成解析结果。
+  const broken = unityfs({ codec: 2, blocks: [], data: Buffer.alloc(0), nodes: [], blockCount: 0, nodeCount: 0 });
+  await assert.rejects(inspectFixture(dir, 'broken-lz4.bundle', broken), /LZ4/u);
 });
 
 test('UnityFS 在前置有填充与尾置布局按逻辑数据区校验多个节点', async () => {
