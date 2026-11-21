@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, open, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { deflateRawSync } from 'node:zlib';
 import { Config } from '../index.js';
 import { manifestFacts, parseManifest, readEntry, readZip } from '../lib/apk.mjs';
 import { projectService } from '../lib/projects.mjs';
@@ -174,33 +175,55 @@ function buildZip(entries) {
   let offset = 0;
   for (const entry of entries) {
     const name = Buffer.from(entry.name, 'utf8');
-    const data = Buffer.isBuffer(entry.data) ? entry.data : Buffer.from(entry.data ?? '', 'utf8');
-    // local 覆盖只用于制造与中央目录不一致的本地头。
+    const raw = Buffer.isBuffer(entry.data) ? entry.data : Buffer.from(entry.data ?? '', 'utf8');
+    // 中央目录记录的压缩方式决定真实载荷：8 用真实 deflate，其余按存储。
+    const centralMethod = entry.method ?? 0;
+    const payload = centralMethod === 8 ? deflateRawSync(raw) : raw;
+    const centralCompressed = entry.central?.compressed ?? payload.length;
+    const centralUncompressed = entry.central?.uncompressed ?? raw.length;
+    const centralFlags = entry.central?.flags ?? 0x800;
+    // descriptor：本地头的三个大小字段置 0，真实值写在数据之后（可带签名也可不带）。
+    const descriptor = entry.descriptor === true;
     const localName = entry.local?.name === undefined ? name : Buffer.from(entry.local.name, 'utf8');
-    const method = entry.local?.method ?? 0;
-    const compressed = entry.local?.compressed ?? data.length;
+    const localMethod = entry.local?.method ?? centralMethod;
+    const localFlags = entry.local?.flags ?? (descriptor ? 0x808 : 0x800);
+    const localCompressed = entry.local?.compressed ?? (descriptor ? 0 : payload.length);
+    const localUncompressed = entry.local?.uncompressed ?? (descriptor ? 0 : raw.length);
     const local = Buffer.alloc(30);
     local.writeUInt32LE(0x04034b50, 0);
     local.writeUInt16LE(20, 4);
-    local.writeUInt16LE(0x800, 6);
-    local.writeUInt16LE(method, 8);
+    local.writeUInt16LE(localFlags, 6);
+    local.writeUInt16LE(localMethod, 8);
     local.writeUInt32LE(0, 14);
-    local.writeUInt32LE(compressed, 18);
-    local.writeUInt32LE(data.length, 22);
+    local.writeUInt32LE(localCompressed, 18);
+    local.writeUInt32LE(localUncompressed, 22);
     local.writeUInt16LE(localName.length, 26);
-    locals.push(local, localName, data);
+    locals.push(local, localName, payload);
+    let tailLength = 0;
+    if (descriptor) {
+      const sizes = entry.descriptorSizes ?? {};
+      tailLength = entry.descriptorSignature === false ? 12 : 16;
+      const tail = Buffer.alloc(tailLength);
+      let at = 0;
+      if (tailLength === 16) { tail.writeUInt32LE(0x08074b50, 0); at = 4; }
+      tail.writeUInt32LE(0, at);
+      tail.writeUInt32LE(sizes.compressed ?? centralCompressed, at + 4);
+      tail.writeUInt32LE(sizes.uncompressed ?? centralUncompressed, at + 8);
+      locals.push(tail);
+    }
     const record = Buffer.alloc(46);
     record.writeUInt32LE(0x02014b50, 0);
     record.writeUInt16LE(20, 4);
     record.writeUInt16LE(20, 6);
-    record.writeUInt16LE(0x800, 8);
+    record.writeUInt16LE(centralFlags, 8);
+    record.writeUInt16LE(centralMethod, 10);
     record.writeUInt32LE(0, 16);
-    record.writeUInt32LE(data.length, 20);
-    record.writeUInt32LE(data.length, 24);
+    record.writeUInt32LE(centralCompressed, 20);
+    record.writeUInt32LE(centralUncompressed, 24);
     record.writeUInt16LE(name.length, 28);
     record.writeUInt32LE(offset, 42);
     central.push(record, name);
-    offset += 30 + localName.length + data.length;
+    offset += 30 + localName.length + payload.length + tailLength;
   }
   const directory = Buffer.concat(central);
   const eocd = Buffer.alloc(22);
@@ -323,14 +346,19 @@ test('缺少清单时 manifestStatus 标为 absent', async t => {
   assert.equal(run.apk.manifest, null);
 });
 
-async function readManifestEntry(file) {
+async function readZipEntry(file, name) {
   const fd = await open(file, 'r');
   try {
     const stat = await fd.stat();
     const entries = await readZip(fd, stat.size, {});
-    const entry = entries.find(item => item.name === 'AndroidManifest.xml');
+    const entry = entries.find(item => item.name === name);
+    if (!entry) throw new Error(`ZIP 缺少条目 ${name}。`);
     return await readEntry(fd, entry, 4 * 1024 * 1024, undefined, stat.size);
   } finally { await fd.close(); }
+}
+
+async function readManifestEntry(file) {
+  return await readZipEntry(file, 'AndroidManifest.xml');
 }
 
 // 只按区块长度顺序走，找到指定类型的第一个区块起点。
@@ -464,4 +492,68 @@ test('权限与活动按页返回，超出首页标记截断并可续页', async
   assert.equal(assets.apk.manifestStatus, 'parsed');
   assert.equal(assets.apk.manifest.permissionsPage.total, 70);
   assert.equal(assets.apk.manifest.activitiesPage.truncated, true);
+});
+
+test('存储与 deflate 条目的实际长度必须与中央目录记录一致', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'guoluo-zip-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const stored = join(root, 'stored.zip');
+  await writeFile(stored, buildZip([{ name: 'entry.bin', data: Buffer.alloc(8), central: { uncompressed: 9 } }]));
+  await assert.rejects(readZipEntry(stored, 'entry.bin'), /存储条目压缩后大小与解压后大小不符/u);
+
+  const wrongDeflate = join(root, 'deflate-bad.zip');
+  await writeFile(wrongDeflate, buildZip([{ name: 'entry.bin', data: 'hello world', method: 8, central: { uncompressed: 99 } }]));
+  await assert.rejects(readZipEntry(wrongDeflate, 'entry.bin'), /解压后长度与中央目录不符/u);
+
+  const goodDeflate = join(root, 'deflate-ok.zip');
+  await writeFile(goodDeflate, buildZip([{ name: 'entry.bin', data: 'hello world', method: 8 }]));
+  assert.equal((await readZipEntry(goodDeflate, 'entry.bin')).toString('utf8'), 'hello world');
+
+  // 普通截断：中央目录写明的长度超过文件实际字节，直接报错而不是给半截数据。
+  const truncated = join(root, 'truncated.zip');
+  const full = buildZip([{ name: 'entry.bin', data: 'payload' }]);
+  await writeFile(truncated, full.subarray(0, full.length - 22));
+  await assert.rejects(readZipEntry(truncated, 'entry.bin'), /ZIP/u);
+});
+
+test('数据描述符带签名时校验大小，不带签名仍是合法写法', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'guoluo-zip-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const signed = join(root, 'signed.zip');
+  await writeFile(signed, buildZip([{ name: 'entry.bin', data: 'payload', descriptor: true }]));
+  assert.equal((await readZipEntry(signed, 'entry.bin')).toString('utf8'), 'payload');
+
+  const unsigned = join(root, 'unsigned.zip');
+  await writeFile(unsigned, buildZip([{ name: 'entry.bin', data: 'payload', descriptor: true, descriptorSignature: false }]));
+  assert.equal((await readZipEntry(unsigned, 'entry.bin')).toString('utf8'), 'payload');
+
+  const wrong = join(root, 'wrong.zip');
+  await writeFile(wrong, buildZip([{ name: 'entry.bin', data: 'payload', descriptor: true, descriptorSizes: { uncompressed: 3 } }]));
+  await assert.rejects(readZipEntry(wrong, 'entry.bin'), /数据描述符与中央目录不符/u);
+});
+
+test('AXML 区块头长度与最小结构不完整时报错', () => {
+  const oversizedHeader = buildAxml();
+  const start = chunkAt(oversizedHeader, 0x0102);
+  oversizedHeader.writeUInt16LE(oversizedHeader.readUInt32LE(start + 4) + 2, start + 2);
+  assert.throws(() => parseManifest(oversizedHeader, undefined), /AXML 区块头长度超过区块长度/u);
+
+  // headerSize 16 <= size 20：头部合法但装不下 ResXMLTree_attrExt 的 36 字节最小结构。
+  const shortElement = buildAxml();
+  const element = chunkAt(shortElement, 0x0102);
+  shortElement.writeUInt32LE(20, element + 4);
+  assert.throws(() => parseManifest(shortElement, undefined), /AXML 起始标签结构不完整/u);
+
+  const shortPool = buildAxml();
+  const poolAt = chunkAt(shortPool, 0x0001);
+  assert.ok(poolAt > 0);
+  shortPool.writeUInt16LE(8, poolAt + 2);
+  shortPool.writeUInt32LE(8, poolAt + 4);
+  assert.throws(() => parseManifest(shortPool, undefined), /AXML 字符串池头部无效/u);
+});
+
+test('AXML 属性预算按每个元素声明的数量预扣，超限在建模前就报错', () => {
+  const data = buildAxml();
+  assert.ok(parseManifest(data, undefined).length >= 1);
+  assert.throws(() => parseManifest(data, undefined, { maxAttributes: 2 }), /AXML 属性预算超限/u);
 });

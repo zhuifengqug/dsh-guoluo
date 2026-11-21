@@ -267,8 +267,25 @@ test('变长扫描只在本节 raw 范围内找终止符，跨节重叠即报错
   assert.match(mixedFacts.imports.reason, /节数据在文件中重叠/u);
 });
 
-test('导出函数地址槽位越界或序号到槽位映射重复时标记 unreadable', async t => {
+test('两个不同序号共用同一函数地址槽位是合法别名导出，仍按 parsed 返回', async t => {
+  const file = await temp(t, buildPe({
+    exportNames: ['AliasA', 'AliasB'],
+    exportOrdinals: [0, 1],
+    exportFunctions: 2,
+    exportNamesRva: 0x10f0,
+    exportOrdinalsRva: 0x10f8,
+    exportStringsRva: 0x1100,
+  }));
+  const facts = await parsePe(file.file, new AbortController().signal);
+  assert.equal(facts.exports.status, 'parsed');
+  // 两个名字各占一个序号、指向同一槽位（buildPe 把两个槽位都写成同一 RVA）。
+  assert.deepEqual(facts.exports.items.map(item => item.ordinal), [1, 2]);
+  assert.equal(facts.exports.aliasSlots, 1);
+});
+
+test('导出函数地址槽位越界或序号表重复序号时标记 unreadable', async t => {
   const signal = new AbortController().signal;
+  // 损坏的证据必须是序号表里重复的序号值本身，而不是“两个名字共用同一地址”。
   const duplicate = await temp(t, buildPe({
     exportNames: ['A', 'B'],
     exportOrdinals: [0, 0],
@@ -279,7 +296,7 @@ test('导出函数地址槽位越界或序号到槽位映射重复时标记 unre
   }));
   const duplicateFacts = await parsePe(duplicate.file, signal);
   assert.equal(duplicateFacts.exports.status, 'unreadable');
-  assert.match(duplicateFacts.exports.reason, /映射重复/u);
+  assert.match(duplicateFacts.exports.reason, /序号表出现重复序号/u);
   assert.equal(duplicateFacts.imports.status, 'parsed');
 
   const oversized = await temp(t, buildPe({ exportFunctions: 0x200 }));
