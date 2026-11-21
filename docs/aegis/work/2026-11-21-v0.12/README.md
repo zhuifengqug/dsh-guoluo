@@ -29,12 +29,16 @@
 
 - 候选覆盖度只看文件层：有同名文件不等于内容等价，令牌只查是否声明，不查取值是否被真正使用。
 - 并发跑测试的偶发失败未定位到根因（推测是多个 Chromium 实例争内存/端口），先用串行规避。
-- bundle formatVersion ≥ 9 的块条目布局（18 字节）尚未支持；数据块 LZMA/LZHAM 仍未解；加密包只记块信息；IL2CPP 只到头部。
+- bundle formatVersion ≥ 9 的块条目布局尚未核对：AssetStudio 在该版本多读一个偏移字段，UnityPy 1.25.4 仍按 10 字节读，本机没有真实 v9 包可对照，因此 v0.12.1 起对 v9 及以上直接拒绝，而不是按 10 字节猜出一张错的块表。
+- 数据块 LZMA/LZHAM 仍未解；加密包只记块信息；IL2CPP 只到头部。
 - 加密 PCK 条目的实际存储区间未核验。
 
 ## 校验和
 
 ```
+zhuifengqug-dsh-guoluo-0.12.1.tgz  69238 字节
+SHA-256  C2CF7D759A2788D4EC6BE8A70888BC4A9DE876390667AB12712E7134EBA8C9D7
+
 zhuifengqug-dsh-guoluo-0.12.0.tgz  68974 字节
 SHA-256  59A23806BF9D62C6C38BC4BE2CBBFEFF98619200FE55CF8EEF30E32115B653FE
 ```

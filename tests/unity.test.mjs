@@ -309,6 +309,13 @@ test('坏头、越界声明与读取期变化都被拒绝', async () => {
   await writeFile(join(dir, 'old.bundle'), old);
   await assert.rejects(inspectUnityHeader(join(dir, 'old.bundle'), old.length, 'unity-bundle'), /格式版本/u);
 
+  // v9 起的块表布局未经核对：宁可拒绝，也不按 10 字节猜出一张错的块表。
+  const future = Buffer.alloc(64);
+  future.write('UnityFS\0', 0, 'latin1');
+  future.writeUInt32BE(9, 8);
+  await writeFile(join(dir, 'future.bundle'), future);
+  await assert.rejects(inspectUnityHeader(join(dir, 'future.bundle'), future.length, 'unity-bundle'), /块表布局未经核对/u);
+
   // 头声明 6、但没有版本字符串终止符：既不能猜也不能越界读
   const truncated = Buffer.alloc(64);
   truncated.fill(0x41, 0);
