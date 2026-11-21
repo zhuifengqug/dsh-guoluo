@@ -101,7 +101,14 @@ test('仓库生成并经 UnityPy 回读的 UnityFS v6 包读出块表和节点',
     count: 1, returned: 1, truncated: false,
     items: [{ index: 0, path: 'assets/demo/data', offset: 0, size: 14, flags: 4 }],
   });
-  assert.equal(payload.status, 'unobserved');
+  assert.equal(payload.status, 'parsed');
+  assert.equal(payload.bytes, 14);
+  assert.equal(payload.truncated, false);
+  assert.deepEqual(payload.nodes, [{
+    index: 0, path: 'assets/demo/data', size: 14,
+    sha256: 'e5de319f964572a88cc57c63161098d5a0afcaf62866fe1b467e9ee16914d062',
+    magic: 'binary', preview: Buffer.from('guoluo-fixture').toString('hex'),
+  }]);
   assert.deepEqual(JSON.parse(JSON.stringify(facts)), facts);
 });
 
@@ -157,18 +164,29 @@ test('UnityFS 在前置有填充与尾置布局按逻辑数据区校验多个节
   const dir = await scratch();
   for (const atEnd of [false, true]) {
     const facts = await inspectFixture(dir, `layout-${atEnd}.bundle`, unityfs({
-      blocks: [[4, 4, 0], [6, 2, 2]], data: Buffer.alloc(6), atEnd, padStart: true,
+      blocks: [[4, 4, 0], [6, 6, 0]], data: Buffer.alloc(10), atEnd, padStart: true,
       nodes: [['空目录/资源', 2, 6], ['last.resS', 8, 2, 0]],
     }));
     assert.equal(facts.blocks.count, 2);
     assert.equal(facts.blocks.uncompressedBytes, 10);
-    assert.equal(facts.blocks.compressedBytes, 6);
+    assert.equal(facts.blocks.compressedBytes, 10);
     assert.deepEqual(facts.nodes.items, [
       { index: 0, path: '空目录/资源', offset: 2, size: 6, flags: 4 },
       { index: 1, path: 'last.resS', offset: 8, size: 2, flags: 0 },
     ]);
-    assert.match(facts.payload.reason, /未解压，节点内容未观测/u);
+    assert.equal(facts.payload.status, 'parsed');
+    assert.equal(facts.payload.bytes, 10);
+    assert.deepEqual(facts.payload.nodes.map(({ index, path, size, magic }) => ({ index, path, size, magic })), [
+      { index: 0, path: '空目录/资源', size: 6, magic: 'zero-filled' },
+      { index: 1, path: 'last.resS', size: 2, magic: 'zero-filled' },
+    ]);
   }
+  // 数据块自称 LZ4 却不是合法流：不返回半份载荷，只记解压失败的原因。
+  const broken = await inspectFixture(dir, 'broken-data.bundle', unityfs({
+    blocks: [[4, 4, 0], [6, 2, 2]], data: Buffer.alloc(6), nodes: [['x.resS', 0, 4]],
+  }));
+  assert.equal(broken.payload.status, 'unobserved');
+  assert.match(broken.payload.reason, /数据区解压失败/u);
 });
 
 test('UnityFS 拒绝声明不一致、超出数量或路径上限及越界的节点', async () => {
@@ -336,7 +354,7 @@ test('目录盘点登记 Unity 素材行、头部证据、规格与不回放说�
   assert.equal(json.evidence.unity.length, 2);
   assert.equal(json.evidence.unity.find(file => file.path === 'global-metadata.dat').headerLayout, 'unverified');
   assert.match(markdown, /UnityFS 节点 1 \/ 块 1/u);
-  assert.ok(json.unknowns.some(text => text.includes('IL2CPP 元数据表和运行时依赖未观测')));
+  assert.ok(json.unknowns.some(text => text.includes('IL2CPP 元数据字段表')));
   assert.ok(json.unknowns.some(text => text.includes('仅记录声明头长') && text.includes('未核对字段表')));
 
   const mock = await service.mock({ id: added.id, runId: run.runId, port: 5199 });

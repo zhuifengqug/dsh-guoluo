@@ -112,6 +112,9 @@ try {
   assert.equal(unityDetails.rows[0].blocksInfo.status, 'parsed');
   assert.equal(unityDetails.rows[0].blocksInfo.compression, 'lz4');
   assert.deepEqual(unityDetails.rows[0].nodes.items, [{ index: 0, path: 'assets/demo/data', offset: 0, size: 14, flags: 4 }]);
+  assert.equal(unityDetails.rows[0].payload.status, 'parsed');
+  assert.equal(unityDetails.rows[0].payload.bytes, 14);
+  assert.equal(unityDetails.rows[0].payload.nodes[0].sha256, 'e5de319f964572a88cc57c63161098d5a0afcaf62866fe1b467e9ee16914d062');
   await copyFile(new URL('./fixtures/unityfs-none.bundle', import.meta.url), join(sourceRoot, 'uncompressed.bundle'));
   const { id: uncompressedId } = await call('target_add', { kind: 'local', location: 'uncompressed.bundle' });
   const { runId: uncompressedRunId } = await call('dissect', { id: uncompressedId });
@@ -119,6 +122,8 @@ try {
   assert.equal(uncompressed.blocksInfo.status, 'parsed');
   assert.equal(uncompressed.blocks.count, 1);
   assert.deepEqual(uncompressed.nodes.items, [{ index: 0, path: 'assets/demo/data', offset: 0, size: 14, flags: 4 }]);
+  assert.equal(uncompressed.payload.status, 'parsed');
+  assert.equal(uncompressed.payload.nodes[0].magic, 'binary');
   // Minimal header-only PE32+ fixture. It has no code or data directories.
   const peFixture = Buffer.alloc(0x200);
   peFixture.write('MZ');
