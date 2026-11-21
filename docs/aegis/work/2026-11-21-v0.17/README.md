@@ -10,7 +10,7 @@
    - 新增两个证据类别 `pe-imports` 与 `pe-exports`（进 `dossierKinds`）。
    - **回到源文件现解析**：按登记位置解析出基准目录（登记目录时把 `path` 拼在目录后；登记单个文件时用它的父目录），再定位这批证据里登记过的那一个 PE 文件，用 `parsePe` 重新读表。不读批次里被截断的投影冒充全量。
    - 多文件时必须用 `path` 指明；`path` 不在这批证据里、或这批证据没有 PE 结果，分别给出明确错误。
-   - 导入按「DLL × 符号」摊平成行，导出按「名称 + 序号」给出；都按 `offset`/`limit` 分页，`total` 是真实总量，`nextOffset` 为空表示读完，`truncated` 表示还有下一页。
+   - 导入按「DLL × 符号」摊平成行，导出按「名称 + 序号」给出；都按 `offset`/`limit` 分页。`total` 是这一轮可翻阅的条数（导出另给 `namedCount` 表示导出表声明的总数），`nextOffset` 为空表示读完，`truncated` 表示还有下一页，读取预算用尽时 `status: partial` 且 `incomplete: true`。
 2. `lib/pe.mjs` 的 `parsePe(path, signal, { nameLimit, descriptorLimit })`：符号名上限与导入描述符上限改为可选参数，默认仍是 128 / 64，保持盘点时的保守预算；只有 `pePage` 走 20000 / 512 的读取上限。
 3. `index.js`：`guoluo_dossier` 的 `kind` 枚举加 `pe-imports`、`pe-exports`，新增可选参数 `path`（≤500 字符），描述里说明用途。
 4. 文档：`README.md` 第 4 步与 `skills/guoluo-rebuild/SKILL.md` 第 4 步补这两个类别的用法；`header()` 里 PE 摘要的 `detail` 也指向它们。
@@ -23,11 +23,11 @@
 - 真实文件实测（不进仓库，只作为证据）：`C:\Windows\System32\kernel32.dll` → 命名导出 1698 条，`offset: 1600` 仍能取到第 1601–1605 条；导入 104 个 DLL / 1276 个符号，`imports.status` 为 `parsed`。全量解析耗时 234 ms。`user32.dll` 148 ms、`shell32.dll` 70 ms。
 - 全量：`GUOLUO_TEST_REA=... npm run test:serial` → 118 项全过 0 失败 0 跳过。
 - 打包：25 文件 76.4 kB / 解压 241.1 kB。
-- 隔离宿主：从本包 tarball 离线安装后冷启动 `/tests/host-smoke.mjs` → `{"result":"passed","version":"0.17.0","tools":12,...}`，其中新增一条断言：单文件 PE 档案 `pe-exports` 页 `total: 0`、`rows: []`、`path` 回显文件名。
+- 隔离宿主：从本包 tarball 离线安装后冷启动 `/tests/host-smoke.mjs` → `{"result":"passed","version":"0.17.0","tools":12,...}`。宿主 smoke 的 PE 夹具换成带一个导入 DLL（`DEMO.dll` / `CreateThing` / 序号 3）与一个命名导出（`DoThing`）的 PE32+，断言 `pe-imports` 取到 `['CreateThing','#3']`、`pe-exports` 取到 `['DoThing']`，不再用「空页也通过」的弱断言。
 
 ## 未验证与边界
 
-- `pe-imports` 的 `total` 是实际读到的符号数；若某个 DLL 的符号数超过 `nameLimit`（20000），`status` 会是 `partial`，`note` 说明还有下一页。此时 `total` 只是这一轮读到的数量，不是理论总量。
+- `pe-imports` 与 `pe-exports` 的 `total` 都是「这一轮可翻阅的条数」，不是理论总量：某个表超过 `nameLimit`（20000）时 `status` 会是 `partial`、`incomplete` 为 `true`、`nextOffset` 在翻完可读条目后归 `null`，`note` 明确「翻页结束不代表读完整张表」。导出表声明的总数单独放在 `namedCount`。
 - 仍不解析延迟导入（delay import）与绑定导入的符号名。
 - 只读文件，不执行 PE。
 - 其余缺口未变：LZHAM 块、UnityFS v9 块表、IL2CPP 元数据字段表、加密 PCK 实际区间、craft-anything 后端（保持关闭）、复刻工程骨架（暂缓）、小说流程（最后）。

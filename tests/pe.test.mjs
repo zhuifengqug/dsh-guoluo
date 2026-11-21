@@ -444,3 +444,54 @@ test('导出序号超出函数槽位数量时标记 unreadable', async t => {
   assert.equal(facts.exports.status, 'unreadable');
   assert.match(facts.exports.reason, /导出序号越界/u);
 });
+
+test('PE 分页到达读取预算后终止游标，并区分可翻阅条数与声明数', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'guoluo-pe-page-cap-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const [sourceRoot, archiveRoot] = ['source', 'archive'].map(name => join(root, name));
+  await Promise.all([mkdir(sourceRoot), mkdir(archiveRoot)]);
+  const retained = 20000;
+  const declared = retained + 1;
+  const exportAddressRva = 0x2000;
+  const exportNamesRva = exportAddressRva + declared * 4;
+  const exportOrdinalsRva = exportNamesRva + declared * 4;
+  const exportStringsRva = exportOrdinalsRva + declared * 2;
+  const exportNames = Array.from({ length: declared }, (_, i) => `Export${String(i).padStart(5, '0')}`);
+  await writeFile(join(sourceRoot, 'exports.dll'), buildPe({
+    exportNames, exportOrdinals: exportNames.map((_, i) => i), exportFunctions: declared,
+    exportAddressRva, exportNamesRva, exportOrdinalsRva, exportStringsRva,
+    sectionSize: exportStringsRva - RVA + declared * 16,
+  }));
+  const imported = buildPe({ sectionSize: 0x1000 + (declared + 1) * 8 });
+  const thunk = 0x2000;
+  imported.writeUInt32LE(thunk, off(RVA));
+  for (let i = 0; i < declared; i++) imported.writeBigUInt64LE(0x8000000000000003n, off(thunk) + i * 8);
+  await writeFile(join(sourceRoot, 'imports.dll'), imported);
+  const service = projectService(Config({ sourceRoot, archiveRoot, reaPath: join(root, 'missing.mjs') }));
+
+  for (const [location, kind] of [['exports.dll', 'pe-exports'], ['imports.dll', 'pe-imports']]) {
+    const { id } = await service.add({ kind: 'local', location });
+    const { runId } = await service.dissect({ id, rea: false });
+    const request = { id, runId, kind, limit: 1 };
+    const before = await service.dossier({ ...request, offset: retained - 2 });
+    assert.equal(before.nextOffset, retained - 1);
+    const last = await service.dossier({ ...request, offset: before.nextOffset });
+    assert.equal(last.total, retained);
+    assert.equal(last.status, 'partial');
+    assert.equal(last.incomplete, true);
+    assert.equal(last.source, 'current-file');
+    assert.equal(last.returned, 1);
+    assert.equal(last.nextOffset, null);
+    assert.equal(last.truncated, false);
+    assert.match(last.note, /超过读取预算/u);
+    const end = await service.dossier({ ...request, offset: retained });
+    assert.deepEqual(end.rows, []);
+    assert.equal(end.nextOffset, null);
+    if (kind === 'pe-exports') {
+      assert.equal(last.namedCount, declared);
+      assert.equal(last.rows[0].name, 'Export19999');
+    } else {
+      assert.equal(last.rows[0].symbol, '#3');
+    }
+  }
+});

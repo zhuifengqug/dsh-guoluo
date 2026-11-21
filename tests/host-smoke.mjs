@@ -132,33 +132,78 @@ try {
   assert.deepEqual(uncompressed.nodes.items, [{ index: 0, path: 'assets/demo/data', offset: 0, size: 14, flags: 4 }]);
   assert.equal(uncompressed.payload.status, 'parsed');
   assert.equal(uncompressed.payload.nodes[0].magic, 'binary');
-  // Minimal header-only PE32+ fixture. It has no code or data directories.
-  const peFixture = Buffer.alloc(0x200);
-  peFixture.write('MZ');
+  // PE32+ 夹具：一个节里带导入（DEMO.dll / CreateThing / 序号 3）和一个命名导出（DoThing），
+  // 让符号分页的断言落在非空结果上，而不是「空页也算通过」。
+  const RVA = 0x1000, RAW = 0x200, SECTION = 0x400;
+  const off = rva => RAW + (rva - RVA);
+  const peFixture = Buffer.alloc(RAW + SECTION);
+  peFixture.write('MZ', 0, 'latin1');
   peFixture.writeUInt32LE(0x80, 0x3c);
   peFixture.writeUInt32LE(0x4550, 0x80);
   peFixture.writeUInt16LE(0x8664, 0x84);
+  peFixture.writeUInt16LE(1, 0x86);
   peFixture.writeUInt16LE(240, 0x94);
   peFixture.writeUInt16LE(0x20b, 0x98);
+  peFixture.writeUInt32LE(RVA, 0x98 + 16);
   peFixture.writeBigUInt64LE(0x140000000n, 0x98 + 24);
-  peFixture.writeUInt32LE(peFixture.length, 0x98 + 60);
+  peFixture.writeUInt32LE(0x200, 0x98 + 60);
   peFixture.writeUInt16LE(3, 0x98 + 68);
-  await writeFile(join(sourceRoot, 'metadata-only.dll'), peFixture);
-  const { id: peId } = await call('target_add', { kind: 'local', location: 'metadata-only.dll' });
+  peFixture.writeUInt32LE(16, 0x98 + 108);
+  const peDir = (index, rva, bytes) => {
+    peFixture.writeUInt32LE(rva, 0x98 + 112 + index * 8);
+    peFixture.writeUInt32LE(bytes, 0x98 + 112 + index * 8 + 4);
+  };
+  peDir(0, 0x10c0, 40);
+  peDir(1, RVA, 40);
+  const peTable = 0x98 + 240;
+  peFixture.write('.text', peTable, 'latin1');
+  peFixture.writeUInt32LE(SECTION, peTable + 8);
+  peFixture.writeUInt32LE(RVA, peTable + 12);
+  peFixture.writeUInt32LE(SECTION, peTable + 16);
+  peFixture.writeUInt32LE(RAW, peTable + 20);
+  peFixture.writeUInt32LE(0x60000020, peTable + 36);
+  // 导入描述符与 thunk：一条按名字（CreateThing），一条按序号（3）。
+  peFixture.writeUInt32LE(0x1040, off(RVA));
+  peFixture.writeUInt32LE(0x1060, off(RVA) + 12);
+  peFixture.writeUInt32LE(0x1040, off(RVA) + 16);
+  peFixture.writeBigUInt64LE(0x1080n, off(0x1040));
+  peFixture.writeBigUInt64LE(0x8000000000000003n, off(0x1040) + 8);
+  peFixture.write('DEMO.dll', off(0x1060), 'latin1');
+  peFixture.writeUInt16LE(0, off(0x1080));
+  peFixture.write('CreateThing', off(0x1080) + 2, 'latin1');
+  // 导出目录：一个函数槽位、一个名字、序号 0。
+  const peExp = off(0x10c0);
+  peFixture.writeUInt32LE(1, peExp + 16);
+  peFixture.writeUInt32LE(1, peExp + 20);
+  peFixture.writeUInt32LE(1, peExp + 24);
+  peFixture.writeUInt32LE(0x10e8, peExp + 28);
+  peFixture.writeUInt32LE(0x10f0, peExp + 32);
+  peFixture.writeUInt32LE(0x10f4, peExp + 36);
+  peFixture.writeUInt32LE(RVA, off(0x10e8));
+  peFixture.writeUInt32LE(0x10f8, off(0x10f0));
+  peFixture.writeUInt16LE(0, off(0x10f4));
+  peFixture.write('DoThing', off(0x10f8), 'latin1');
+  await writeFile(join(sourceRoot, 'demo.dll'), peFixture);
+  const { id: peId } = await call('target_add', { kind: 'local', location: 'demo.dll' });
   const peRun = await call('dissect', { id: peId });
   const { rows: [pe] } = await call('dossier', { id: peId, runId: peRun.runId, kind: 'binary' });
   assert.equal(pe.format, 'pe32+');
   assert.equal(pe.machine, 'x64');
-  assert.equal(pe.imports.status, 'absent');
-  assert.equal(pe.exports.status, 'absent');
-  // PE 符号分页单文件档案不必写 path；这份夹具没有导入导出，页应为空但结构完整。
-  const peSymbols = await call('dossier', { id: peId, runId: peRun.runId, kind: 'pe-exports', limit: 5 });
-  assert.equal(peSymbols.path, 'metadata-only.dll');
-  assert.equal(peSymbols.total, 0);
-  assert.deepEqual(peSymbols.rows, []);
+  assert.equal(pe.imports.status, 'parsed');
+  assert.equal(pe.exports.status, 'parsed');
+  // 单文件档案不必写 path；符号必须真的读出来，不是空页。
+  const peImports = await call('dossier', { id: peId, runId: peRun.runId, kind: 'pe-imports', limit: 5 });
+  assert.equal(peImports.path, 'demo.dll');
+  assert.equal(peImports.source, 'current-file');
+  assert.equal(peImports.total, 2);
+  assert.deepEqual(peImports.rows.map(row => row.symbol), ['CreateThing', '#3']);
+  const peExports = await call('dossier', { id: peId, runId: peRun.runId, kind: 'pe-exports', limit: 5 });
+  assert.equal(peExports.total, 1);
+  assert.deepEqual(peExports.rows.map(row => row.name), ['DoThing']);
+  assert.equal(peExports.nextOffset, null);
   const peSpec = await call('spec', { id: peId, runId: peRun.runId });
   const peEvidence = JSON.parse(await readFile(peSpec.files.json, 'utf8')).evidence.pe.files;
-  assert.equal(peEvidence[0].path, 'metadata-only.dll');
+  assert.equal(peEvidence[0].path, 'demo.dll');
   assert.equal(peEvidence[0].format, 'pe32+');
   // apk-pagination.apk 由 aapt2 link 生成，清单里各有 70 条 uses-permission 与 activity。
   await copyFile(new URL('./fixtures/apk-pagination.apk', import.meta.url), join(sourceRoot, 'pagination.apk'));
