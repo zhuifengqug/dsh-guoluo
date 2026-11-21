@@ -7,7 +7,7 @@ description: 使用蜾蠃整理经过导出或准备好的 HTML、CSS、素材�
 
 1. 调用 `guoluo_probe` 检查素材根和档案根。REA 未装不影响本地静态盘点。
 2. 用 `guoluo_target_add` 登记素材根内相对路径，`kind` 选 `local`；目录、单个 HTML/CSS、Electron `.asar`、Android `.apk`、Godot `.pck`、Windows `.exe`/`.dll`，或 Unity 的 `global-metadata.dat`、`.bundle`/`.unity3d` 都可登记。`kind: url` 只记录出处，不触发采集；已有的本地导出件单独登记。
-3. 用 `guoluo_dissect` 返回批次 ID、数量、范围、耗时与 REA 绑定结果。目录型素材会自动调用 REA 分析并把摘要绑定到本次素材的路径与根哈希；`rea.status` 为 `analyzed` 且 `rea.binding.status` 为 `verified` 才能采信行为侧证据，`mismatch` 视为无行为侧证据，需要重新采集。单文件、ASAR、APK、PCK、PE、Unity 与 URL 档案不会触发 REA；APK 只按 ZIP 中央目录与二进制清单静态解析（包名、版本、SDK、权限、入口 Activity、ABI），不解压资源、不校验签名；PCK 只读包头与文件表（引擎版本、条目、加密标记、场景/脚本/资源计数），不解压条目、不解密、不运行游戏；PE 只解析头部、节表、导入导出表与 CLR 标记，不反编译、不运行二进制；Unity 盘点 `UnityFS` 头和可读的未压缩块表、节点表，也记录 `global-metadata.dat` 的 IL2CPP 头部证据。压缩表、节点内容和 IL2CPP 元数据表仍是证据缺口。
+3. 用 `guoluo_dissect` 返回批次 ID、数量、范围、耗时与 REA 绑定结果。目录型素材会自动调用 REA 分析并把摘要绑定到本次素材的路径与根哈希；`rea.status` 为 `analyzed` 且 `rea.binding.status` 为 `verified` 才能采信行为侧证据，`mismatch` 视为无行为侧证据，需要重新采集。单文件、ASAR、APK、PCK、PE、Unity 与 URL 档案不会触发 REA；APK 只按 ZIP 中央目录与二进制清单静态解析（包名、版本、SDK、权限、入口 Activity、ABI），不解压资源、不校验签名；PCK 只读包头与文件表（引擎版本、条目、加密标记、场景/脚本/资源计数），不解压条目、不解密、不运行游戏；PE 只解析头部、节表、导入导出表与 CLR 标记，不反编译、不运行二进制；Unity 盘点 `UnityFS` 头、块信息段（未压缩或 LZ4/LZ4HC 压缩）与节点表，也记录 `global-metadata.dat` 的 IL2CPP 头部证据。LZMA/LZHAM 压缩块、节点内容和 IL2CPP 元数据表仍是证据缺口。
 4. 用 `guoluo_dossier` 指定批次 `runId`，按 `asset`、`token`、`navigation`、`reference` 或 `binary`（PE 与 Unity 逐文件明细）分页；当前页的 `nextOffset` 为 `null` 时结束。资产路径和证据行号引用同一批次。
 5. 需要落到实现时，先 `guoluo_spec` 拿复刻义务账本：每条有编号、证据位置和 `declared` 状态；`conflicts` 里的令牌必须在动工前定值，`unknowns` 里的缺口必须显式处理，不能当作已完成。
 6. 要变量就 `guoluo_tokens`（原样 CSS + Tailwind v4 片段），要清单就 `guoluo_export`（json/markdown/csv）。派生产物可重复生成，每次整份替换，不追加历史。

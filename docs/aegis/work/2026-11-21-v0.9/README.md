@@ -32,3 +32,7 @@
 - APK 清单的采集预算：目前权限与活动各保留 256 条、每份 64 KiB 字节预算，超出只留前缀并标 truncated。相对 `limits.entries` 12000 与 `rows` 4000 偏紧，是否放大。
 - 16 位或隔行 PNG 是否改为给出警告而非整档 blocked。
 - `maximumChannelDelta` 与 `meanAbsoluteChannelDelta` 是否从并列证据升级为硬校验。
+
+## 后续（v0.10.0）
+
+三项均已按 G 的决定落地：APK 预算放大为每类 512 条 / 单类 256 KiB；16 位与隔行 PNG 保持整档 blocked；两项通道差值升级为硬校验。UnityFS 块信息段同期支持 LZ4/LZ4HC。详见 [v0.10.0 记录](../2026-11-21-v0.10/README.md)。

@@ -52,16 +52,16 @@ DSH 0.2.2-rc.5 的本地应用资产档案插件。把静态素材整理成可�
 }
 ```
 
-支持 1–16 条路由。单页调用也可在 `visual` 顶层指定 `baselineEntry` 和 `candidateEntry`，与 `routes` 二选一。REA 的截图经过指纹核对，插件独立解码 PNG 并复算变化像素数。两边计数不一致时，该档会标为 `conflict` 并保留两组数值。路由三档全部核验通过后才出分，分数取 `1 − 三档中的最大变化像素比例`。默认结论写明「本分数按逐通道 0 阈值计算，含抗锯齿差异」。像素分数衡量本地静态视口，交互和功能需各自验收。
+支持 1–16 条路由。单页调用也可在 `visual` 顶层指定 `baselineEntry` 和 `candidateEntry`，与 `routes` 二选一。REA 的截图经过指纹核对，插件独立解码 PNG 并复算变化像素数、最大通道差值与平均绝对通道差值三项，与 REA 证据逐项交叉核对。任一项不一致时，该档会标为 `conflict` 并保留两组数值。路由三档全部核验通过后才出分，分数取 `1 − 三档中的最大变化像素比例`。默认结论写明「本分数按逐通道 0 阈值计算，含抗锯齿差异」。像素分数衡量本地静态视口，交互和功能需各自验收。
 
 ## 当前能看什么
 
 - **本地目录或单个 HTML/CSS**：常见媒体和字体文件目录、HTML/CSS SHA-256、CSS 自定义属性、静态 HTML 链接和部分资产引用。引用值丢弃查询参数、片段和带登录信息的 URL；不将链接当作服务器路由。
 - **ASAR**：只看包头里的目录和登记大小，不验证归档成员或解包内容。要读 HTML/CSS 的证据，请单独登记已经导出的目录。
-- **APK**：只按 ZIP 中央目录和二进制 `AndroidManifest.xml` 做静态解析——包名、`versionCode`/`versionName`、min/target SDK、权限、activity 与启动入口、原生 ABI，以及 `res/`、`assets/` 里可识别的图片/字体/音视频条目与 dex/so/签名的计数。`manifestStatus` 标明清单是 `parsed`、`absent`、`unreadable` 还是 `parse-failed`。不解压资源内容、不校验签名、不运行应用；APK 内的素材条目只登记、不回放。
+- **APK**：只按 ZIP 中央目录和二进制 `AndroidManifest.xml` 做静态解析——包名、`versionCode`/`versionName`、min/target SDK、权限、activity 与启动入口、原生 ABI，以及 `res/`、`assets/` 里可识别的图片/字体/音视频条目与 dex/so/签名的计数。`manifestStatus` 标明清单是 `parsed`、`absent`、`unreadable` 还是 `parse-failed`。不解压资源内容、不校验签名、不运行应用；APK 内的素材条目只登记、不回放。清单里权限与活动各保留前 512 条、单类清单文本保留 256 KiB，超出部分标记截断并提示需要重新盘点。
 - **EXE/DLL**：解析 DOS/COFF/可选头、节表、导入 DLL 与函数名（或序号）、导出名与序号、CLR 目录标记，进入规格的「原生二进制」表。规格保留命名导出总数，并在前 128 个命名导出引用的槽位中统计 `aliasSlots`：至少两个不同槽位记录同一非零 RVA 时计为一组。未观测时记为 `null`，实测没有符合条件的组时记为 `0`。不反编译、不解析资源与证书、不运行二进制；二进制条目只登记、不回放。
 - **Godot PCK**：读取独立 PCK 的头部与文件表，支持包格式 1–4，记录引擎版本、条目大小、加密标志和场景／脚本／资源计数。加密、稀疏或超预算的目录只记录头部与声明条目数。加密条目的实际存储范围未核验。
-- **Unity**：`UnityFS` 读取包头及未压缩的块表、节点表，登记块大小与压缩方式、节点路径、偏移、大小和标志。压缩或加密的块信息不展开，节点内容未观测。`global-metadata.dat` 记录 IL2CPP 声明版本与头长；已知版本的声明头长在文件范围内但与已知布局不符时，标为 `headerLayout: unverified`，保留头部证据，不核对字段表。Unity 素材只登记、不回放。
+- **Unity**：`UnityFS` 读取包头、块信息段（未压缩，或 LZ4/LZ4HC 压缩时由插件自行解压）与节点表，登记块大小与压缩方式、节点路径、偏移、大小和标志。LZMA/LZHAM 压缩的块信息段、加密包与节点内容不展开。`global-metadata.dat` 记录 IL2CPP 声明版本与头长；已知版本的声明头长在文件范围内但与已知布局不符时，标为 `headerLayout: unverified`，保留头部证据，不核对字段表。Unity 素材只登记、不回放。
 - **URL**：只保存出处，不发请求、不打开页面。原 URL 的查询参数和片段不会保存。
 - **REA**：探测 CLI 版本；对目录型素材自动跑 `analyze-javascript-application`，把证据包写到 `<id>/rea/<runId>/evidence.json`，并用八项检查确认摘要与本次素材绑定——证据 id 形状、证据包可读、父操作类型、父记录里的素材路径、根哈希自洽、摘要与父记录根哈希一致、证据文件字节数一致。绑定不通过时判 `mismatch`，不给行为侧结论。
 - **视觉核对**：显式传 `visual` 时，用 REA 的 `list-browser-targets`、`capture-web-screenshot`、`compare-web-screenshots` 比较基准与候选的三档静态视口，产物落盘可复查。需要本机 Chrome 或 Edge（或配置 `chromiumPath`）。
