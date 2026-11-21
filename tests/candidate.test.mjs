@@ -77,6 +77,24 @@ test('候选覆盖度：内容完全相同的素材判为已覆盖且标同指�
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
+test('候选覆盖度：页面同名但内容不同时并列指纹，不算缺失', async () => {
+  const { dir, id, runId, service, source } = await scratch();
+  try {
+    await mkdir(join(source, 'page-drift'), { recursive: true });
+    // 页面只剩骨架、少了图片与链接：同名但内容不同。
+    await writeFile(join(source, 'page-drift', 'index.html'), '<!doctype html><html><body>todo</body></html>');
+    await writeFile(join(source, 'page-drift', 'app.css'), css);
+    await writeFile(join(source, 'page-drift', 'hero.png'), Buffer.from('89504e470d0a1a0a', 'hex'));
+    const result = await service.check({ id, runId, candidate: { directory: 'page-drift' } });
+    const coverage = result.candidate;
+    // 页面文件同时是 asset 行，内容不同进 assets.changed；不当作缺失。
+    assert.deepEqual(coverage.assets.missing, []);
+    assert.deepEqual(coverage.assets.changed.map(item => item.target), ['index.html']);
+    assert.notEqual(coverage.assets.changed[0].archive, coverage.assets.changed[0].built);
+    assert.match(coverage.note, /1 个同名素材/u);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
 test('候选覆盖度：同名令牌取值不同时并列两个值，不把差异算成缺失', async () => {
   const { dir, id, runId, service, source } = await scratch();
   try {
