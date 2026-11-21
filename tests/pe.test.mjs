@@ -12,7 +12,18 @@ const RAW = 0x200;
 const SECTION_SIZE = 0x400;
 const off = rva => RAW + (rva - RVA);
 
-function buildPe({ wide = true, importRva = RVA, exportRva = 0x10c0 } = {}) {
+function buildPe({
+  wide = true,
+  importRva = RVA,
+  exportRva = 0x10c0,
+  exportNames = ['DoThing'],
+  exportOrdinals = [0],
+  exportFunctions = 1,
+  exportAddressRva = 0x10e8,
+  exportNamesRva = 0x10f0,
+  exportOrdinalsRva = 0x10f4,
+  exportStringsRva = 0x10f8,
+} = {}) {
   const optionalSize = wide ? 240 : 224;
   const directoryStart = wide ? 112 : 96;
   const directoryCountAt = directoryStart - 4;
@@ -68,16 +79,69 @@ function buildPe({ wide = true, importRva = RVA, exportRva = 0x10c0 } = {}) {
   if (inside(exportRva)) {
     const exp = off(exportRva);
     buffer.writeUInt32LE(1, exp + 16);
-    buffer.writeUInt32LE(1, exp + 20);
-    buffer.writeUInt32LE(1, exp + 24);
-    buffer.writeUInt32LE(0x10e8, exp + 28);
-    buffer.writeUInt32LE(0x10f0, exp + 32);
-    buffer.writeUInt32LE(0x10f4, exp + 36);
-    buffer.writeUInt32LE(RVA, off(0x10e8));
-    buffer.writeUInt32LE(0x10f8, off(0x10f0));
-    buffer.writeUInt16LE(0, off(0x10f4));
-    buffer.write('DoThing', off(0x10f8), 'latin1');
+    buffer.writeUInt32LE(exportFunctions, exp + 20);
+    buffer.writeUInt32LE(exportNames.length, exp + 24);
+    buffer.writeUInt32LE(exportAddressRva, exp + 28);
+    buffer.writeUInt32LE(exportNamesRva, exp + 32);
+    buffer.writeUInt32LE(exportOrdinalsRva, exp + 36);
+    if (off(exportAddressRva) + exportFunctions * 4 <= size) {
+      for (let i = 0; i < Math.min(exportFunctions, 4); i++) buffer.writeUInt32LE(RVA, off(exportAddressRva) + i * 4);
+    }
+    exportNames.forEach((name, index) => {
+      buffer.writeUInt32LE(exportStringsRva + index * 16, off(exportNamesRva) + index * 4);
+      buffer.write(name, off(exportStringsRva + index * 16), 'latin1');
+    });
+    exportOrdinals.forEach((ordinal, index) => buffer.writeUInt16LE(ordinal, off(exportOrdinalsRva) + index * 2));
   }
+  return buffer;
+}
+
+// 两节在文件里 raw 区间重叠：.text 的 raw 0x200–0xa00 盖住 .data 的 0x600–0x800。
+function buildOverlapPe({ importRva = 0x1000 } = {}) {
+  const optionalSize = 240;
+  const directoryStart = 112;
+  const sectionTable = 0x98 + optionalSize; // 0x188
+  const headersSize = 0x200;
+  const size = headersSize + 0x800;
+  const buffer = Buffer.alloc(size);
+  buffer.write('MZ', 0, 'latin1');
+  buffer.writeUInt32LE(0x80, 0x3c);
+  buffer.writeUInt32LE(0x4550, 0x80);
+  buffer.writeUInt16LE(0x8664, 0x84);
+  buffer.writeUInt16LE(2, 0x86);
+  buffer.writeUInt32LE(0x5f000000, 0x88);
+  buffer.writeUInt16LE(optionalSize, 0x94);
+  const opt = 0x98;
+  buffer.writeUInt16LE(0x20b, opt);
+  buffer.writeUInt32LE(0x1000, opt + 16);
+  buffer.writeBigUInt64LE(0x140000000n, opt + 24);
+  buffer.writeUInt32LE(headersSize, opt + 60);
+  buffer.writeUInt16LE(3, opt + 68);
+  buffer.writeUInt32LE(16, opt + directoryStart - 4);
+  const writeDir = (index, rva, bytes) => {
+    buffer.writeUInt32LE(rva, opt + directoryStart + index * 8);
+    buffer.writeUInt32LE(bytes, opt + directoryStart + index * 8 + 4);
+  };
+  writeDir(0, 0x9000, 40);
+  writeDir(1, importRva, 40);
+  const section = (at, name, rva, virtualSize, rawOffset, rawSize) => {
+    buffer.write(name, sectionTable + at, 'latin1');
+    buffer.writeUInt32LE(virtualSize, sectionTable + at + 8);
+    buffer.writeUInt32LE(rva, sectionTable + at + 12);
+    buffer.writeUInt32LE(rawSize, sectionTable + at + 16);
+    buffer.writeUInt32LE(rawOffset, sectionTable + at + 20);
+    buffer.writeUInt32LE(0x60000020, sectionTable + at + 36);
+  };
+  section(0, '.text', 0x1000, 0x800, 0x200, 0x800);
+  section(40, '.data', 0x2000, 0x200, 0x600, 0x200);
+  if (importRva === 0x1000) {
+    buffer.writeUInt32LE(0x1100, 0x200);
+    buffer.writeUInt32LE(0x1300, 0x20c);
+    buffer.writeUInt32LE(0x1100, 0x210);
+    buffer.writeBigUInt64LE(0x8000000000000003n, 0x300);
+  }
+  // 名字从 raw 0x500 起一直是可打印字符，终止符只落在 0x600（下一节 raw 起点）之外。
+  buffer.fill(0x58, 0x500, 0x600);
   return buffer;
 }
 
@@ -185,4 +249,53 @@ test('PE 解析失败的尝试同样消耗名额并记录不可读条目', async
   const binaryRows = await service.dossier({ id: target.id, kind: 'binary', limit: 5 });
   assert.equal(binaryRows.total, 16);
   assert.ok(binaryRows.rows.every(row => row.status === 'unreadable' && typeof row.reason === 'string'));
+});
+
+test('变长扫描只在本节 raw 范围内找终止符，跨节重叠即报错', async t => {
+  const signal = new AbortController().signal;
+  const overlapped = await temp(t, buildOverlapPe());
+  const facts = await parsePe(overlapped.file, signal);
+  assert.equal(facts.sections.length, 2);
+  assert.equal(facts.sections[1].name, '.data');
+  assert.equal(facts.imports.status, 'unreadable');
+  assert.match(facts.imports.reason, /唯一节范围内终止/u);
+
+  // 目录起点本身落在另一节 raw 区间内：字节归属不唯一，同样拒绝。
+  const mixed = await temp(t, buildOverlapPe({ importRva: 0x1500 }));
+  const mixedFacts = await parsePe(mixed.file, signal);
+  assert.equal(mixedFacts.imports.status, 'unreadable');
+  assert.match(mixedFacts.imports.reason, /节数据在文件中重叠/u);
+});
+
+test('导出函数地址槽位越界或序号到槽位映射重复时标记 unreadable', async t => {
+  const signal = new AbortController().signal;
+  const duplicate = await temp(t, buildPe({
+    exportNames: ['A', 'B'],
+    exportOrdinals: [0, 0],
+    exportFunctions: 1,
+    exportNamesRva: 0x10f0,
+    exportOrdinalsRva: 0x10f8,
+    exportStringsRva: 0x1100,
+  }));
+  const duplicateFacts = await parsePe(duplicate.file, signal);
+  assert.equal(duplicateFacts.exports.status, 'unreadable');
+  assert.match(duplicateFacts.exports.reason, /映射重复/u);
+  assert.equal(duplicateFacts.imports.status, 'parsed');
+
+  const oversized = await temp(t, buildPe({ exportFunctions: 0x200 }));
+  const oversizedFacts = await parsePe(oversized.file, signal);
+  assert.equal(oversizedFacts.exports.status, 'unreadable');
+  assert.match(oversizedFacts.exports.reason, /范围越界/u);
+
+  const missing = await temp(t, buildPe({ exportAddressRva: 0x9000 }));
+  const missingFacts = await parsePe(missing.file, signal);
+  assert.equal(missingFacts.exports.status, 'unreadable');
+  assert.match(missingFacts.exports.reason, /唯一的文件字节范围|范围越界/u);
+});
+
+test('导出序号超出函数槽位数量时标记 unreadable', async t => {
+  const file = await temp(t, buildPe({ exportNames: ['A'], exportOrdinals: [1], exportFunctions: 1 }));
+  const facts = await parsePe(file.file, new AbortController().signal);
+  assert.equal(facts.exports.status, 'unreadable');
+  assert.match(facts.exports.reason, /导出序号越界/u);
 });

@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, open, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { Config } from '../index.js';
+import { manifestFacts, parseManifest, readEntry, readZip } from '../lib/apk.mjs';
 import { projectService } from '../lib/projects.mjs';
 
 function utf16Pool(strings) {
@@ -31,6 +32,38 @@ function utf16Pool(strings) {
   buffer.writeUInt32LE(strings.length, 8);
   buffer.writeUInt32LE(0, 12);
   buffer.writeUInt32LE(0, 16);
+  buffer.writeUInt32LE(stringsStart, 20);
+  buffer.writeUInt32LE(0, 24);
+  offsets.forEach((offset, index) => buffer.writeUInt32LE(offset, 28 + index * 4));
+  data.copy(buffer, stringsStart);
+  return buffer;
+}
+
+// UTF-8 池：每条字符串是「字符数（变长）、字节数（变长）、UTF-8 字节、0」。两段长度都走 1/2 字节前缀。
+function utf8Pool(strings) {
+  const parts = [];
+  const offsets = [];
+  let cursor = 0;
+  for (const value of strings) {
+    offsets.push(cursor);
+    const bytes = Buffer.from(value, 'utf8');
+    const units = Buffer.from(value, 'utf16le').length / 2;
+    const encode = size => (size < 0x80 ? Buffer.from([size]) : Buffer.from([0x80 | (size >>> 8), size & 0xff]));
+    const lengths = Buffer.concat([encode(units), encode(bytes.length)]);
+    parts.push(lengths, bytes, Buffer.from([0]));
+    cursor += lengths.length + bytes.length + 1;
+  }
+  const data = Buffer.concat(parts);
+  const headerSize = 28;
+  const stringsStart = headerSize + offsets.length * 4;
+  const padded = (stringsStart + data.length + 3) & ~3;
+  const buffer = Buffer.alloc(padded);
+  buffer.writeUInt16LE(0x0001, 0);
+  buffer.writeUInt16LE(28, 2);
+  buffer.writeUInt32LE(padded, 4);
+  buffer.writeUInt32LE(strings.length, 8);
+  buffer.writeUInt32LE(0, 12);
+  buffer.writeUInt32LE(0x100, 16);
   buffer.writeUInt32LE(stringsStart, 20);
   buffer.writeUInt32LE(0, 24);
   offsets.forEach((offset, index) => buffer.writeUInt32LE(offset, 28 + index * 4));
@@ -95,7 +128,7 @@ const PLAN = [
   ['end', 'manifest'],
 ];
 
-function buildAxml(plan = PLAN) {
+function buildAxml(plan = PLAN, { utf8 = false } = {}) {
   const index = new Map();
   const strings = [];
   const intern = value => {
@@ -125,7 +158,7 @@ function buildAxml(plan = PLAN) {
       chunks.push(endElement(intern(step[1])));
     }
   }
-  const pool = utf16Pool(strings);
+  const pool = utf8 ? utf8Pool(strings) : utf16Pool(strings);
   const body = Buffer.concat(chunks);
   const total = (8 + pool.length + body.length + 3) & ~3;
   const header = Buffer.alloc(8);
@@ -142,16 +175,20 @@ function buildZip(entries) {
   for (const entry of entries) {
     const name = Buffer.from(entry.name, 'utf8');
     const data = Buffer.isBuffer(entry.data) ? entry.data : Buffer.from(entry.data ?? '', 'utf8');
+    // local 覆盖只用于制造与中央目录不一致的本地头。
+    const localName = entry.local?.name === undefined ? name : Buffer.from(entry.local.name, 'utf8');
+    const method = entry.local?.method ?? 0;
+    const compressed = entry.local?.compressed ?? data.length;
     const local = Buffer.alloc(30);
     local.writeUInt32LE(0x04034b50, 0);
     local.writeUInt16LE(20, 4);
     local.writeUInt16LE(0x800, 6);
-    local.writeUInt16LE(0, 8);
+    local.writeUInt16LE(method, 8);
     local.writeUInt32LE(0, 14);
-    local.writeUInt32LE(data.length, 18);
+    local.writeUInt32LE(compressed, 18);
     local.writeUInt32LE(data.length, 22);
-    local.writeUInt16LE(name.length, 26);
-    locals.push(local, name, data);
+    local.writeUInt16LE(localName.length, 26);
+    locals.push(local, localName, data);
     const record = Buffer.alloc(46);
     record.writeUInt32LE(0x02014b50, 0);
     record.writeUInt16LE(20, 4);
@@ -163,7 +200,7 @@ function buildZip(entries) {
     record.writeUInt16LE(name.length, 28);
     record.writeUInt32LE(offset, 42);
     central.push(record, name);
-    offset += 30 + name.length + data.length;
+    offset += 30 + localName.length + data.length;
   }
   const directory = Buffer.concat(central);
   const eocd = Buffer.alloc(22);
@@ -284,4 +321,147 @@ test('缺少清单时 manifestStatus 标为 absent', async t => {
   const run = await service.dissect({ id: target.id });
   assert.equal(run.apk.manifestStatus, 'absent');
   assert.equal(run.apk.manifest, null);
+});
+
+async function readManifestEntry(file) {
+  const fd = await open(file, 'r');
+  try {
+    const stat = await fd.stat();
+    const entries = await readZip(fd, stat.size, {});
+    const entry = entries.find(item => item.name === 'AndroidManifest.xml');
+    return await readEntry(fd, entry, 4 * 1024 * 1024, undefined, stat.size);
+  } finally { await fd.close(); }
+}
+
+// 只按区块长度顺序走，找到指定类型的第一个区块起点。
+function chunkAt(buffer, type) {
+  let pos = 0;
+  while (pos + 8 <= buffer.length) {
+    const size = buffer.readUInt32LE(pos + 4);
+    if (buffer.readUInt16LE(pos) === type) return pos;
+    pos += buffer.readUInt16LE(pos) === 0x0003 ? buffer.readUInt16LE(pos + 2) : size;
+  }
+  return -1;
+}
+
+test('ZIP 本地头与中央目录不一致时拒绝读取，清单标为 unreadable', async t => {
+  const { sourceRoot, service } = await setup(t);
+  const cases = [
+    { local: { name: 'Other.xml' }, pattern: /本地头文件名与中央目录不符/u },
+    { local: { method: 8 }, pattern: /本地头压缩方式与中央目录不符/u },
+    { local: { compressed: 3 }, pattern: /本地头压缩后大小与中央目录不符/u },
+  ];
+  for (const [index, item] of cases.entries()) {
+    const name = `mismatch${index}.apk`;
+    const file = join(sourceRoot, name);
+    await writeFile(file, buildZip([{ name: 'AndroidManifest.xml', data: buildAxml(), local: item.local }]));
+    await assert.rejects(readManifestEntry(file), item.pattern);
+    const target = await service.add({ kind: 'local', location: name });
+    const run = await service.dissect({ id: target.id });
+    assert.equal(run.apk.manifestStatus, 'unreadable');
+    assert.equal(run.apk.manifest, null);
+    assert.equal(run.apk.counts.manifest, 0);
+    assert.ok(run.notes.some(note => note.includes('清单事实缺失')));
+  }
+});
+
+test('AXML 按文档声明的长度与元素声明的属性数校验，越界即报错', async t => {
+  const truncated = buildAxml();
+  truncated.writeUInt32LE(truncated.length - 4, 4);
+  assert.throws(() => parseManifest(truncated, undefined), /AXML 区块越过文档声明的总长度/u);
+
+  const extraAttribute = buildAxml();
+  const at = chunkAt(extraAttribute, 0x0102);
+  assert.ok(at > 0);
+  extraAttribute.writeUInt16LE(extraAttribute.readUInt16LE(at + 28) + 1, at + 28);
+  assert.throws(() => parseManifest(extraAttribute, undefined), /AXML 属性表越界/u);
+
+  const wrongSize = buildAxml();
+  const sizeAt = chunkAt(wrongSize, 0x0102);
+  wrongSize.writeUInt32LE(wrongSize.readUInt32LE(sizeAt + 4) + 4, sizeAt + 4);
+  assert.throws(() => parseManifest(wrongSize, undefined), /AXML 元素声明长度与属性数量不符/u);
+
+  const trailing = Buffer.concat([buildAxml(), Buffer.from([0x2a])]);
+  assert.throws(() => parseManifest(trailing, undefined), /AXML 声明范围之外仍有数据/u);
+
+  const { sourceRoot, service } = await setup(t);
+  await writeFile(join(sourceRoot, 'baddecl.apk'), buildZip([{ name: 'AndroidManifest.xml', data: truncated }]));
+  const target = await service.add({ kind: 'local', location: 'baddecl.apk' });
+  const run = await service.dissect({ id: target.id });
+  assert.equal(run.apk.manifestStatus, 'parse-failed');
+  assert.equal(run.apk.manifest, null);
+  assert.ok(run.notes.some(note => note.includes('二进制 AndroidManifest.xml 解析失败')));
+});
+
+test('UTF-8 字符串池的变长长度前缀支持超过 128 字符的非 ASCII 字符串', async t => {
+  const { sourceRoot, service } = await setup(t);
+  const longName = `v${'长'.repeat(150)}`;
+  const longPermission = `android.permission.${'X'.repeat(140)}`;
+  assert.ok(Buffer.byteLength(longName, 'utf8') > 128);
+  const plan = [
+    ['start', 'manifest', [['package', 'str', 'com.example.utf8'], ['versionName', 'str', longName]]],
+    ['start', 'uses-permission', [['name', 'str', longPermission]]],
+    ['end', 'uses-permission'],
+    ['end', 'manifest'],
+  ];
+  const data = buildAxml(plan, { utf8: true });
+  await writeFile(join(sourceRoot, 'utf8.apk'), buildZip([{ name: 'AndroidManifest.xml', data }]));
+  const target = await service.add({ kind: 'local', location: 'utf8.apk' });
+  const run = await service.dissect({ id: target.id });
+  assert.equal(run.apk.manifestStatus, 'parsed');
+  assert.equal(run.apk.manifest.versionName, longName);
+  assert.equal(run.apk.manifest.package, 'com.example.utf8');
+  assert.deepEqual(run.apk.manifest.permissions, [longPermission]);
+});
+
+test('权限与活动按页返回，超出首页标记截断并可续页', async t => {
+  const { sourceRoot, service } = await setup(t);
+  const permissions = Array.from({ length: 70 }, (_, index) => `android.permission.P${String(index).padStart(2, '0')}`);
+  const activities = Array.from({ length: 70 }, (_, index) => `.Act${String(index).padStart(2, '0')}`);
+  const plan = [['start', 'manifest', [['package', 'str', 'com.example.page']]]];
+  for (const name of permissions) plan.push(['start', 'uses-permission', [['name', 'str', name]]], ['end', 'uses-permission']);
+  for (const name of activities) plan.push(['start', 'activity', [['name', 'str', name]]], ['end', 'activity']);
+  plan.push(['end', 'manifest']);
+  const data = buildAxml(plan);
+  await writeFile(join(sourceRoot, 'page.apk'), buildZip([
+    { name: 'AndroidManifest.xml', data },
+    { name: 'assets/page.css', data: ':root{--p:1}' },
+  ]));
+  const target = await service.add({ kind: 'local', location: 'page.apk' });
+  const run = await service.dissect({ id: target.id });
+
+  assert.equal(run.apk.manifest.permissions.length, 64);
+  assert.equal(run.apk.manifest.permissions[0], permissions[0]);
+  assert.deepEqual(run.apk.manifest.permissionsPage, { offset: 0, limit: 64, total: 70, returned: 64, nextOffset: 64, truncated: true });
+  assert.equal(run.apk.manifest.permissionsTruncated, true);
+  assert.equal(run.apk.manifest.activities.length, 64);
+  assert.equal(run.apk.manifest.activitiesPage.total, 70);
+  assert.equal(run.apk.manifest.activitiesPage.nextOffset, 64);
+
+  const next = manifestFacts(data, undefined, { permissions: { offset: 64 }, activities: { offset: 64 } });
+  assert.equal(next.permissions.length, 6);
+  assert.equal(next.permissions[0], permissions[64]);
+  assert.deepEqual(next.permissionsPage, { offset: 64, limit: 64, total: 70, returned: 6, nextOffset: null, truncated: false });
+  assert.equal(next.activities.length, 6);
+  assert.equal(next.activitiesPage.truncated, false);
+  assert.throws(() => manifestFacts(data, undefined, { permissions: { offset: -1 } }), /分页偏移无效/u);
+
+  const spec = await service.spec({ id: target.id, runId: run.runId });
+  const { readFile } = await import('node:fs/promises');
+  const json = JSON.parse(await readFile(spec.files.json, 'utf8'));
+  assert.equal(json.evidence.apk.manifestStatus, 'parsed');
+  assert.equal(json.evidence.apk.permissions.total, 70);
+  assert.equal(json.evidence.apk.permissions.returned, 64);
+  assert.equal(json.evidence.apk.permissions.truncated, true);
+  assert.equal(json.evidence.apk.activities.nextOffset, 64);
+  const markdown = await readFile(spec.files.markdown, 'utf8');
+  assert.match(markdown, /APK 权限 \| 第 1–64 条 \/ 共 70 条（有后续页，offset 64）/u);
+  assert.match(markdown, /APK 清单状态 \| parsed/u);
+
+  // 分页返回只带一页资产，清单状态与分页元数据仍随头部返回。
+  const assets = await service.dossier({ id: target.id, kind: 'asset', limit: 1 });
+  assert.equal(assets.rows.length, 1);
+  assert.equal(assets.apk.manifestStatus, 'parsed');
+  assert.equal(assets.apk.manifest.permissionsPage.total, 70);
+  assert.equal(assets.apk.manifest.activitiesPage.truncated, true);
 });
