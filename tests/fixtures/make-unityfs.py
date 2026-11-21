@@ -55,34 +55,30 @@ def build() -> bytes:
     return head + bytes(blocks_info) + node
 
 
-def verify(data: bytes) -> None:
-    reader = EndianBinaryReader(data)
-    bundle = BundleFile(reader, None)
-    assert bundle.version >= 6, bundle.version
-    assert bundle.dataflags & 0x3F == 0, bundle.dataflags
+def verify(data: bytes, version: int, flags: int) -> BundleFile:
+    bundle = BundleFile(EndianBinaryReader(data), None)
+    assert bundle.version == version, bundle.version
+    assert int(bundle.dataflags) == flags, bundle.dataflags
     assert bundle.version_player == UNITY_VERSION, bundle.version_player
     assert bundle.version_engine == UNITY_REVISION, bundle.version_engine
-    # 目录节点名就是文件内容流的键；UnityPy 至此已经把块解压进内存
+    assert list(bundle.files) == [NODE_PATH], list(bundle.files)
     entry = bundle.files[NODE_PATH]
     assert entry.Length == len(NODE_DATA), entry.Length
     assert bytes(entry.bytes[: entry.Length]) == NODE_DATA
+    return bundle
 
 
 def main() -> int:
     target = Path(sys.argv[1])
     data = build()
-    verify(data)
+    bundle = verify(data, version=6, flags=0x40)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(data)
-    print(f"written {target} {len(data)} bytes, verified by UnityPy")
-    bundle = BundleFile(EndianBinaryReader(data), None)
+    print(f"written {target} {len(data)} bytes, verified by UnityPy: node {NODE_PATH} ({len(NODE_DATA)} bytes)")
     bundle.version = 7
     bundle._uses_block_alignment = True
     compressed = bundle.save("lz4")
-    reloaded = BundleFile(EndianBinaryReader(compressed), None)
-    assert reloaded.version == 7
-    assert int(reloaded.dataflags) == 0xC2
-    assert reloaded.files[NODE_PATH].bytes == NODE_DATA
+    verify(compressed, version=7, flags=0xC2)
     compressed_target = target.with_name("unityfs-lz4-tail.bundle")
     compressed_target.write_bytes(compressed)
     print(f"written {compressed_target} {len(compressed)} bytes, verified by UnityPy")
