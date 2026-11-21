@@ -1,13 +1,18 @@
-"""生成 UnityFS v6 无压缩和 v7 尾置 LZ4 夹具，并用 UnityPy 回读。
+"""Generate UnityFS fixtures and print the UnityPy-written snapshot used by Node tests.
 
-v6 用 struct 拼装，v7 用 UnityPy BundleFile.save() 写出。
+Usage: python tests/fixtures/make-unityfs.py <scratch-dir>/unityfs-none.bundle
 """
+import base64
+import json
 import struct
 import sys
+from collections import Counter
+from importlib import import_module
 from pathlib import Path
+from unittest.mock import patch
 
 from UnityPy.files import BundleFile
-from UnityPy.streams import EndianBinaryReader
+from UnityPy.streams import EndianBinaryReader, EndianBinaryWriter
 
 UNITY_VERSION = "2021.3.16f1"
 UNITY_REVISION = "2021.3.16f1 (0e1a5c4a6b2f)"
@@ -68,6 +73,41 @@ def verify(data: bytes, version: int, flags: int) -> BundleFile:
     return bundle
 
 
+def independent_snapshot(bundle: BundleFile) -> dict:
+    extra = EndianBinaryWriter(b"second UnityPy node")
+    extra.flags = 0
+    bundle.files["assets/demo/second.resS"] = extra
+    data = bundle.save("none")
+
+    implementation = import_module("UnityPy.files.BundleFile")
+    block_type = implementation.BlockInfo
+    blocks = []
+
+    def record_block(*args):
+        block = block_type(*args)
+        blocks.append(block._asdict())
+        return block
+
+    class ObservedBundle(BundleFile):
+        def read_fs(self, reader):
+            nodes, payload = super().read_fs(reader)
+            self.nodes = [node._asdict() for node in nodes]
+            return nodes, payload
+
+    # UnityPy consumes the block table inside read_fs without retaining the list.
+    with patch.object(implementation, "BlockInfo", record_block):
+        reread = ObservedBundle(EndianBinaryReader(data), None)
+    assert int(reread.dataflags) == 0x40
+    assert list(reread.files) == [NODE_PATH, "assets/demo/second.resS"]
+    assert blocks and all(block["flags"] & 0x3F == 0 for block in blocks)
+    return {
+        "base64": base64.b64encode(data).decode("ascii"),
+        "nodes": reread.nodes,
+        "blocks": blocks,
+        "codecCounts": dict(Counter(block["flags"] & 0x3F for block in blocks)),
+    }
+
+
 def main() -> int:
     target = Path(sys.argv[1])
     data = build()
@@ -82,6 +122,7 @@ def main() -> int:
     compressed_target = target.with_name("unityfs-lz4-tail.bundle")
     compressed_target.write_bytes(compressed)
     print(f"written {compressed_target} {len(compressed)} bytes, verified by UnityPy")
+    print(json.dumps(independent_snapshot(bundle)))
     return 0
 
 

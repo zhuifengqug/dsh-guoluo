@@ -105,6 +105,24 @@ test('仓库生成并经 UnityPy 回读的 UnityFS v6 包读出块表和节点',
   assert.deepEqual(JSON.parse(JSON.stringify(facts)), facts);
 });
 
+test('UnityPy 独立写入并回读的无压缩表与插件逐项一致', async () => {
+  // UnityPy 1.25.4 snapshot: regenerate with tests/fixtures/make-unityfs.py.
+  const base64 = 'VW5pdHlGUwAAAAAHMjAyMS4zLjE2ZjEAMjAyMS4zLjE2ZjEgKDBlMWE1YzRhNmIyZikAAAAAAAAAAOQAAABzAAAAcwAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAACEAAAAhAEAAAAACAAAAAAAAAAAAAAAAAAAADgAAAARhc3NldHMvZGVtby9kYXRhAAAAAAAAAAAOAAAAAAAAABMAAAAAYXNzZXRzL2RlbW8vc2Vjb25kLnJlc1MAZ3VvbHVvLWZpeHR1cmVzZWNvbmQgVW5pdHlQeSBub2Rl';
+  const facts = await inspectFixture(await scratch(), 'unitypy-none.bundle', Buffer.from(base64, 'base64'));
+  assert.equal(facts.blocksInfo.compressionCode, 0);
+  assert.equal(facts.blocksInfo.status, 'parsed');
+  assert.equal(facts.nodes.count, 2);
+  assert.deepEqual(facts.nodes.items.map(({ index, ...node }) => node), [
+    { offset: 0, size: 14, flags: 4, path: 'assets/demo/data' },
+    { offset: 14, size: 19, flags: 0, path: 'assets/demo/second.resS' },
+  ]);
+  assert.equal(facts.blocks.count, 1);
+  assert.deepEqual(facts.blocks.items.map(({ index, compression, ...block }) => block), [{ uncompressedSize: 33, compressedSize: 33, flags: 64 }]);
+  const codecCounts = {};
+  for (const { compression } of facts.blocks.items) codecCounts[compression] = (codecCounts[compression] ?? 0) + 1;
+  assert.deepEqual(codecCounts, { none: 1 });
+});
+
 test('尾置 LZ4 块信息及压缩前后等长的非零 codec 均未解压', async () => {
   const bytes = await stock('unityfs-lz4-tail.bundle');
   const facts = await inspectUnityHeader(fileURLToPath(fixture('unityfs-lz4-tail.bundle')), bytes.length, 'unity-bundle');
@@ -187,6 +205,31 @@ test('UnityFS 对前置和尾置块信息都计入头部对齐', async () => {
   }
 });
 
+test('UnityFS 读取合法尾置表并拒绝与尾置表范围冲突的声明包长', async () => {
+  const dir = await scratch();
+  const options = { atEnd: true, nodes: [['tail.resS', 0, 4]] };
+  const bytes = unityfs(options);
+  const parsed = await inspectFixture(dir, 'tail.bundle', bytes);
+  assert.equal(parsed.declaredSize, String(bytes.length));
+  assert.equal(parsed.blocksInfo.atEnd, true);
+  assert.deepEqual(parsed.nodes.items, [{ index: 0, path: 'tail.resS', offset: 0, size: 4, flags: 4 }]);
+  await assert.rejects(
+    inspectFixture(dir, 'tail-overlap.bundle', unityfs({ ...options, declaredSize: bytes.length - 5 })),
+    /元数据块范围越界/u,
+  );
+  await assert.rejects(
+    inspectFixture(dir, 'tail-past-eof.bundle', unityfs({ ...options, declaredSize: bytes.length + 1 })),
+    /包长越界/u,
+  );
+});
+
+test('UnityFS 在按 codec 跳过表之前拒绝对齐后的负数据区', async () => {
+  const dir = await scratch();
+  const options = { version: 6, atEnd: true, padStart: true, codec: 2, blocks: [], data: Buffer.alloc(0) };
+  const bytes = unityfs(options);
+  await assert.rejects(inspectFixture(dir, 'tail-padding.bundle', unityfs({ ...options, declaredSize: bytes.length - 1 })), /数据区长度无效/u);
+});
+
 test('IL2CPP 按白名单版本校验头长，包含共用声明版本的 v24 子版', async () => {
   const dir = await scratch();
   for (const [version, headerBytes] of [[16, 192], [24, 264], [24, 272], [27, 256], [29, 256], [31, 256]]) {
@@ -197,8 +240,12 @@ test('IL2CPP 按白名单版本校验头长，包含共用声明版本的 v24 �
     await assert.rejects(inspectFixture(dir, `v${version}.dat`, il2cpp(version), 'il2cpp-metadata'), new RegExp(`版本 ${version} 不在已知白名单`));
   }
   await assert.rejects(inspectFixture(dir, 'short-header.dat', il2cpp(24, 264, 263), 'il2cpp-metadata'), /短于版本 24/u);
-  await assert.rejects(inspectFixture(dir, 'past-eof.dat', il2cpp(24, 272, 264), 'il2cpp-metadata'), /偏移 272 无效/u);
-  await assert.rejects(inspectFixture(dir, 'wrong-offset.dat', il2cpp(29, 272), 'il2cpp-metadata'), /偏移 272 无效/u);
+  await assert.rejects(inspectFixture(dir, 'past-eof.dat', il2cpp(24, 272, 264), 'il2cpp-metadata'), /偏移 272 越界/u);
+  await assert.rejects(inspectFixture(dir, 'small-offset.dat', il2cpp(29, 12), 'il2cpp-metadata'), /偏移 12 越界/u);
+  assert.deepEqual(await inspectFixture(dir, 'unverified-offset.dat', il2cpp(29, 272), 'il2cpp-metadata'), {
+    format: 'il2cpp-metadata', metadataVersion: 29, headerBytes: 272, headerLayout: 'unverified',
+    reason: '声明头长与已知布局不一致，未核对字段表。',
+  });
 });
 
 test('坏头、越界声明与读取期变化都被拒绝', async () => {
@@ -241,7 +288,7 @@ test('目录盘点登记 Unity 素材行、头部证据、规格与不回放说�
   await mkdir(join(source, 'build', 'assets'), { recursive: true });
   await mkdir(archive, { recursive: true });
   await writeFile(join(source, 'build', 'assets', 'desktop.bundle'), await stock('unityfs-none.bundle'));
-  const metadata = il2cpp();
+  const metadata = il2cpp(29, 272);
   await writeFile(join(source, 'build', 'global-metadata.dat'), metadata);
 
   const service = projectService({
@@ -269,16 +316,21 @@ test('目录盘点登记 Unity 素材行、头部证据、规格与不回放说�
   assert.deepEqual(binary.rows[0].nodes.items, [{ index: 0, path: 'assets/demo/data', offset: 0, size: 14, flags: 4 }]);
   const second = await service.dossier({ id: added.id, runId: run.runId, kind: 'binary', limit: 1, offset: binary.nextOffset });
   assert.equal(second.rows[0].path, 'global-metadata.dat');
+  assert.equal(second.rows[0].status, 'header-read');
+  assert.equal(second.rows[0].headerLayout, 'unverified');
+  assert.equal(second.rows[0].headerBytes, 272);
   assert.equal(second.nextOffset, null);
 
   const spec = await service.spec({ id: added.id, runId: run.runId });
   const markdown = await readFile(spec.files.markdown, 'utf8');
   assert.match(markdown, /Unity assets\/desktop\.bundle \| UnityFS 6 \/ 2021\.3\.16f1/u);
-  assert.match(markdown, /Unity global-metadata\.dat \| IL2CPP 声明版本 29/u);
+  assert.match(markdown, /Unity global-metadata\.dat \| IL2CPP 声明版本 29 \/ 声明头长 272 字节 \/ 声明头长与已知布局不一致，未核对字段表/u);
   const json = JSON.parse(await readFile(spec.files.json, 'utf8'));
   assert.equal(json.evidence.unity.length, 2);
+  assert.equal(json.evidence.unity.find(file => file.path === 'global-metadata.dat').headerLayout, 'unverified');
   assert.match(markdown, /UnityFS 节点 1 \/ 块 1/u);
   assert.ok(json.unknowns.some(text => text.includes('IL2CPP 元数据表和运行时依赖未观测')));
+  assert.ok(json.unknowns.some(text => text.includes('仅记录声明头长') && text.includes('未核对字段表')));
 
   const mock = await service.mock({ id: added.id, runId: run.runId, port: 5199 });
   const config = JSON.parse(await readFile(mock.files.config, 'utf8'));

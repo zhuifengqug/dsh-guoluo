@@ -44,19 +44,17 @@ DSH 0.2.2-rc.5 的本地应用资产档案插件。把静态素材整理成可�
 - **APK**：只按 ZIP 中央目录和二进制 `AndroidManifest.xml` 做静态解析——包名、`versionCode`/`versionName`、min/target SDK、权限、activity 与启动入口、原生 ABI，以及 `res/`、`assets/` 里可识别的图片/字体/音视频条目与 dex/so/签名的计数。`manifestStatus` 标明清单是 `parsed`、`absent`、`unreadable` 还是 `parse-failed`。不解压资源内容、不校验签名、不运行应用；APK 内的素材条目只登记、不回放。
 - **EXE/DLL**：解析 DOS/COFF/可选头、节表、导入 DLL 与函数名（或序号）、导出名与序号、CLR 目录标记，进入规格的「原生二进制」表。不反编译、不解析资源与证书、不运行二进制；二进制条目只登记、不回放。
 - **Godot PCK**：读取独立 PCK 的头部与文件表，支持包格式 1–4，记录引擎版本、条目大小、加密标志和场景／脚本／资源计数。加密、稀疏或超预算的目录只记录头部与声明条目数。加密条目的实际存储范围未核验。
-- **Unity**：只核对两处头部。`UnityFS` 读签名、格式版本、Unity 版本串、声明包长、块信息压缩方式与是否在尾部；
-  `global-metadata.dat` 读 IL2CPP 标识与声明版本。包内资产、节点表内容与元数据表都不在本批证据内；Unity 素材只
-  登记、不回放。
+- **Unity**：`UnityFS` 读取包头及未压缩的块表、节点表，登记块大小与压缩方式、节点路径、偏移、大小和标志。压缩或加密的块信息不展开，节点内容未观测。`global-metadata.dat` 记录 IL2CPP 声明版本与头长；已知版本的声明头长在文件范围内但与已知布局不符时，标为 `headerLayout: unverified`，保留头部证据，不核对字段表。Unity 素材只登记、不回放。
 - **URL**：只保存出处，不发请求、不打开页面。原 URL 的查询参数和片段不会保存。
 - **REA**：探测 CLI 版本；对目录型素材自动跑 `analyze-javascript-application`，把证据包写到 `<id>/rea/<runId>/evidence.json`，并用八项检查确认摘要与本次素材绑定——证据 id 形状、证据包可读、父操作类型、父记录里的素材路径、根哈希自洽、摘要与父记录根哈希一致、证据文件字节数一致。绑定不通过时判 `mismatch`，不给行为侧结论。
 - **视觉核对**：显式传 `visual` 时，用 REA 的 `list-browser-targets`、`capture-web-screenshot`、`compare-web-screenshots` 比较基准与候选的三档静态视口，产物落盘可复查。需要本机 Chrome 或 Edge（或配置 `chromiumPath`）。
 
 ## 当前不做
 
-不生成复刻工程、不接入 craft-anything 执行后端或小说流程；Unity 只到头部证据，不解包、不反编译 IL2CPP。扫描有数量、深度和大小预算，命中时在覆盖字段或局限中可见。只写档案根；**默认**不启动目标应用、目标脚本或浏览器，只有显式传 `visual` 才启动插件自己起的隔离 Chromium。REA 分析只接受目录，ASAR、APK、PCK、PE 与单文件需先解包成目录。
+不生成复刻工程、不接入 craft-anything 执行后端或小说流程；Unity 不提取节点内容、不读取 IL2CPP 元数据表或反编译。扫描有数量、深度和大小预算，命中时在覆盖字段或局限中可见。只写档案根；**默认**不启动目标应用、目标脚本或浏览器，只有显式传 `visual` 才启动插件自己起的隔离 Chromium。REA 分析只接受目录，ASAR、APK、PCK、PE 与单文件需先解包成目录。
 
 ## 开发
 
 需要 Node.js 22 或以上。`npm ci` 后用 `npm run check` 运行回归并核对打包清单；默认回归用内置的假 REA 与假浏览器覆盖整条视觉管线，无需真实 Chrome。`GUOLUO_TEST_REA=<rea 可执行路径>` 会额外跑真实 REA 的截图与比对用例（需本机 Chrome）。`node tests/host-smoke.mjs <DSH node_modules> <包目录>` 在隔离 profile 里真实加载。提交与验证约定见 [AGENTS.md](AGENTS.md)。此项目使用 MIT 许可。
 
-Godot 4.7.2 的 `PCKPacker` 生成了普通条目和零字节条目两份夹具。[UnityFS v6 夹具](tests/fixtures/unityfs-none.bundle) 由仓库脚本拼装，再用 UnityPy 1.25.4 回读。[UnityFS v7 夹具](tests/fixtures/unityfs-lz4-tail.bundle) 由 UnityPy 保存并回读，使用尾置 LZ4 块信息。
+Godot 4.7.2 的 `PCKPacker` 生成了普通条目和零字节条目两份夹具。[UnityFS v6 夹具](tests/fixtures/unityfs-none.bundle) 由仓库脚本拼装，再用 UnityPy 1.25.4 回读。[UnityFS v7 夹具](tests/fixtures/unityfs-lz4-tail.bundle) 由 UnityPy 保存并回读，使用尾置 LZ4 块信息。另有一份 UnityPy `BundleFile.save("none")` 独立写入的 v7 包及回读结果，内嵌在 [Unity 回归测试](tests/unity.test.mjs) 中，常规 Node 测试不依赖 Python。
