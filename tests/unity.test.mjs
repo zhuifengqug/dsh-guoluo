@@ -86,7 +86,7 @@ test('仓库生成并经 UnityPy 回读的 UnityFS v6 包读出块表和节点',
   const facts = await inspectUnityHeader(fileURLToPath(fixture('unityfs-none.bundle')), bytes.length, 'unity-bundle');
   const { blocksInfo, blocks, nodes, payload, ...header } = facts;
   assert.deepEqual(header, {
-    format: 'unityfs', formatVersion: 6, unityVersion: '2021.3.16f1',
+    format: 'unityfs', formatVersion: 6, tableLayout: 'verified', unityVersion: '2021.3.16f1',
     unityRevision: '2021.3.16f1 (0e1a5c4a6b2f)', declaredSize: String(bytes.length), flags: 64,
   });
   assert.deepEqual(blocksInfo, {
@@ -339,12 +339,25 @@ test('坏头、越界声明与读取期变化都被拒绝', async () => {
   await writeFile(join(dir, 'old.bundle'), old);
   await assert.rejects(inspectUnityHeader(join(dir, 'old.bundle'), old.length, 'unity-bundle'), /格式版本/u);
 
-  // v9 起的块表布局未经核对：宁可拒绝，也不按 10 字节猜出一张错的块表。
-  const future = Buffer.alloc(64);
-  future.write('UnityFS\0', 0, 'latin1');
-  future.writeUInt32BE(9, 8);
+  // v9 起的块表布局未独立核对：保留头部事实，但不按 10 字节猜块表。
+  const future = unityfs({ version: 9 });
   await writeFile(join(dir, 'future.bundle'), future);
-  await assert.rejects(inspectUnityHeader(join(dir, 'future.bundle'), future.length, 'unity-bundle'), /块表布局未经核对/u);
+  const futureFacts = await inspectUnityHeader(join(dir, 'future.bundle'), future.length, 'unity-bundle');
+  assert.equal(futureFacts.format, 'unityfs');
+  assert.equal(futureFacts.formatVersion, 9);
+  assert.equal(futureFacts.tableLayout, 'unverified');
+  assert.equal(futureFacts.blocksInfo.status, 'unsupported');
+  assert.equal(futureFacts.blocks, null);
+  assert.equal(futureFacts.nodes, null);
+  assert.equal(futureFacts.payload.status, 'skipped');
+  assert.match(futureFacts.reason, /块表布局未独立核对/u);
+
+  // 同一份内容声明为 v8 时块表照常解析，说明拒绝只针对未核对的版本。
+  const supported = unityfs({ version: 8 });
+  await writeFile(join(dir, 'supported.bundle'), supported);
+  const supportedFacts = await inspectUnityHeader(join(dir, 'supported.bundle'), supported.length, 'unity-bundle');
+  assert.equal(supportedFacts.tableLayout, 'verified');
+  assert.equal(supportedFacts.blocksInfo.status, 'parsed');
 
   // 头声明 6、但没有版本字符串终止符：既不能猜也不能越界读
   const truncated = Buffer.alloc(64);
@@ -419,7 +432,7 @@ test('目录盘点登记 Unity 素材行、头部证据、规格与不回放说�
   assert.equal(json.evidence.unity.length, 2);
   assert.equal(json.evidence.unity.find(file => file.path === 'global-metadata.dat').layout, 'unverified');
   assert.match(markdown, /UnityFS 节点 1 \/ 块 1/u);
-  assert.ok(json.unknowns.some(text => text.includes('LZHAM 压缩明确不支持')));
+  assert.ok(json.unknowns.some(text => text.includes('LZHAM 压缩与 UnityFS 格式版本 9')));
   assert.ok(json.unknowns.some(text => text.includes('只记录了头部') && text.includes('尚未核对')));
 
   const mock = await service.mock({ id: added.id, runId: run.runId, port: 5199 });
