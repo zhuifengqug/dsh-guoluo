@@ -123,6 +123,25 @@ try {
   assert.equal(unityDetails.rows[0].payload.status, 'parsed');
   assert.equal(unityDetails.rows[0].payload.bytes, 14);
   assert.equal(unityDetails.rows[0].payload.nodes[0].sha256, 'e5de319f964572a88cc57c63161098d5a0afcaf62866fe1b467e9ee16914d062');
+  const unityV9 = process.env.GUOLUO_TEST_UNITY_V9 ? await (async () => {
+    await copyFile(process.env.GUOLUO_TEST_UNITY_V9, join(sourceRoot, 'official-v9.bundle'));
+    const { id } = await call('target_add', { kind: 'local', location: 'official-v9.bundle' });
+    const { runId } = await call('dissect', { id });
+    const { rows: [row] } = await call('dossier', { id, runId, kind: 'binary' });
+    assert.equal(row.formatVersion, 9);
+    assert.equal(row.dataStart, 288);
+    assert.equal(row.blocksInfo.status, 'parsed');
+    assert.equal(row.blocks.count, 11);
+    assert.deepEqual(row.blocks.items.map(({ offset }) => offset), [0, 6352, 136624, 221360, 264880, 296080, 312048, 348976, 349312, 355344, 356032]);
+    assert.equal(row.payload.status, 'parsed');
+    assert.deepEqual(row.payload.nodes.map(({ path, sha256 }) => ({ path, sha256 })), [
+      { path: 'BuildPlayer-Scene1.sharedAssets', sha256: '903228b4c44c540c9480d871223edde4049957390532eb39c8f0b2b6058dfa72' },
+      { path: 'BuildPlayer-Scene1', sha256: '6cb03b57ba3f6667c18eca8625d227d7a376c38d26cb135055dd1abc0f7512ba' },
+      { path: 'BuildPlayer-Scene2.sharedAssets', sha256: '5b8c30385c93aeaf34107ba5f223727b1bb168af4bd40b344da29a323e202c13' },
+      { path: 'BuildPlayer-Scene2', sha256: '5229c0310ec19ef66b1e192003fb5dbe28bd1ca7d4680b058a2e6bfcd586f24e' },
+    ]);
+    return { blocks: row.blocks.count, nodes: row.payload.nodes.length };
+  })() : null;
   await copyFile(new URL('./fixtures/unityfs-none.bundle', import.meta.url), join(sourceRoot, 'uncompressed.bundle'));
   const { id: uncompressedId } = await call('target_add', { kind: 'local', location: 'uncompressed.bundle' });
   const { runId: uncompressedRunId } = await call('dissect', { id: uncompressedId });
@@ -289,7 +308,7 @@ try {
     }
     return { status: measured.visual.status, routes: measured.visual.routeCount, scores: summary.routes.map(route => route.score) };
   })() : null;
-  console.log(JSON.stringify({ result: 'passed', version: probe.pluginVersion, visual, tools: 12, skill: skill.name, command: command.name, liveSettings: true, rea: probe.rea, linkedRea: siteRun.rea.binding.status, derived: { spec: spec.obligations, brief: brief.bytes > 0, tokens: tokens.total, exported: exported.count, mock: mocked.routes, check: checked.verdict, candidate: covered.candidate.verdict }, pck: pck.pck.counts.entries, unity: unityDetails.rows[0].blocksInfo.compression, il2cpp: il2cppRow.counts.types }));
+  console.log(JSON.stringify({ result: 'passed', version: probe.pluginVersion, visual, tools: 12, skill: skill.name, command: command.name, liveSettings: true, rea: probe.rea, linkedRea: siteRun.rea.binding.status, derived: { spec: spec.obligations, brief: brief.bytes > 0, tokens: tokens.total, exported: exported.count, mock: mocked.routes, check: checked.verdict, candidate: covered.candidate.verdict }, pck: pck.pck.counts.entries, unity: unityDetails.rows[0].blocksInfo.compression, unityV9, il2cpp: il2cppRow.counts.types }));
 } finally {
   await ctx?.fiber.dispose();
   await rm(root, { recursive: true, force: true });

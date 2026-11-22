@@ -204,7 +204,7 @@ test('IL2CPP 类型与字段可经 dossier 分页取回，并进入规格证据'
     const unity = json.evidence.unity.find(file => file.path === 'global-metadata.dat');
     assert.equal(unity.layout, 'verified');
     assert.equal(unity.counts.types, 2);
-    assert.ok(json.unknowns.some(text => text.includes('LZHAM 压缩与 UnityFS 格式版本 9')));
+    assert.ok(json.unknowns.some(text => text.includes('LZHAM 压缩与 UnityFS 格式版本 10')));
 
     await assert.rejects(service.dossier({ id, runId: run.runId, kind: 'il2cpp-types', path: 'other.dat' }), /没有登记该 IL2CPP/u);
   } finally {

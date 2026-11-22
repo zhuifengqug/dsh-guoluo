@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -38,13 +39,17 @@ function unityfs({ blocks = [[4, 4, 0]], nodes = [], blockCount = blocks.length,
   const counts = Buffer.alloc(8);
   counts.writeInt32BE(blockCount, 0);
   counts.writeInt32BE(nodeCount, 4);
+  // v9 的块记录是 10 字节后接一个大端 u64 存储偏移；老版本只有 10 字节。偏移与填充由调用方给，
+  // 数据区按给定字节原样写入，这样断言才绑在真实字节上。
+  const hasOffsets = version === 9;
   const table = Buffer.concat([
     Buffer.alloc(16, 0xab), counts.subarray(0, 4),
-    ...blocks.map(([uncompressed, compressed, flags]) => {
-      const entry = Buffer.alloc(10);
+    ...blocks.map(([uncompressed, compressed, flags, offset = 0]) => {
+      const entry = Buffer.alloc(hasOffsets ? 18 : 10);
       entry.writeUInt32BE(uncompressed, 0);
       entry.writeUInt32BE(compressed, 4);
       entry.writeUInt16BE(flags, 8);
+      if (hasOffsets) entry.writeBigUInt64BE(BigInt(offset), 10);
       return entry;
     }),
     counts.subarray(4),
@@ -237,6 +242,113 @@ test('UnityFS 数据块 LZ4 正例由插件自行解压并切出节点指纹', a
   assert.notEqual(shifted.payload.nodes[0].sha256, facts.payload.nodes[0].sha256);
 });
 
+test('UnityFS v9 按块表记录的存储偏移取块，不靠累加', async () => {
+  const dir = await scratch();
+  const head = Buffer.from('guoluo-v9-head!!');
+  const tail = Buffer.from('zhu');
+  // 第 1 块前留 5 字节填充：按压缩长度累加会把它当成块数据起点，读出来就是错的。
+  const data = Buffer.concat([head, Buffer.alloc(5), tail]);
+  const facts = await inspectFixture(dir, 'v9-padded.bundle', unityfs({
+    version: 9, blocks: [[16, 16, 0, 0], [3, 3, 0, 21]], data,
+    nodes: [['head.resS', 0, 16], ['tail.resS', 16, 3]],
+  }));
+  assert.equal(facts.formatVersion, 9);
+  assert.deepEqual(facts.blocks.items.map(({ offset, compressedSize }) => ({ offset, compressedSize })), [
+    { offset: 0, compressedSize: 16 },
+    { offset: 21, compressedSize: 3 },
+  ]);
+  assert.equal(facts.blocks.compressedBytes, 19);
+  assert.equal(facts.payload.status, 'parsed');
+  assert.equal(facts.payload.bytes, 19);
+  assert.deepEqual(facts.payload.nodes.map(node => node.sha256), [
+    createHash('sha256').update(head).digest('hex'),
+    createHash('sha256').update(tail).digest('hex'),
+  ]);
+
+  // 反证：把第 2 块的偏移压回第 1 块内部，必须判重叠而不是静默读错。
+  const secondEntry = 64 + 20 + 18;
+  const overlap = unityfs({ version: 9, blocks: [[16, 16, 0, 0], [3, 3, 0, 21]], data, nodes: [] });
+  overlap.writeBigUInt64BE(0n, secondEntry + 10);
+  await assert.rejects(inspectFixture(dir, 'v9-overlap.bundle', overlap), /重叠/u);
+
+  // 反证：偏移落在数据区之外，以及偏移合法但块尾越过数据区，两种都拒绝。
+  const beyond = unityfs({ version: 9, blocks: [[16, 16, 0, 0], [3, 3, 0, 21]], data, nodes: [] });
+  beyond.writeBigUInt64BE(0xffffffffffffffffn, secondEntry + 10);
+  await assert.rejects(inspectFixture(dir, 'v9-beyond.bundle', beyond), /超出数据区/u);
+
+  const range = unityfs({ version: 9, blocks: [[16, 16, 0, 0], [3, 3, 0, 21]], data, nodes: [] });
+  range.writeBigUInt64BE(22n, secondEntry + 10);
+  await assert.rejects(inspectFixture(dir, 'v9-range.bundle', range), /存储范围.*超出数据区/u);
+});
+
+test('UnityFS v9 显式偏移与 LZ4 数据块、尾置表同时生效', async () => {
+  const dir = await scratch();
+  // LZ4 块格式：token 高 4 位是字面量长度，两块都用纯字面量，不带匹配。
+  const first = Buffer.concat([Buffer.from([0xe0]), Buffer.from('guoluo-v9-lz4!')]); // 14 字节逻辑
+  const second = Buffer.concat([Buffer.from([0x30]), Buffer.from('zhu')]); // 3 字节逻辑
+  const data = Buffer.concat([first, Buffer.alloc(16), second]);
+  const facts = await inspectFixture(dir, 'v9-lz4-end.bundle', unityfs({
+    version: 9, atEnd: true,
+    blocks: [[14, first.length, 2, 0], [3, second.length, 2, 31]],
+    data, nodes: [['a.resS', 0, 14], ['b.resS', 14, 3]],
+  }));
+  assert.equal(facts.formatVersion, 9);
+  // 元数据块未压缩（头部 codec=0），但数据块自身标 LZ4，两件事分开。
+  assert.equal(facts.blocksInfo.atEnd, true);
+  assert.equal(facts.blocksInfo.compression, 'none');
+  assert.deepEqual(facts.blocks.compression, ['lz4']);
+  assert.deepEqual(facts.blocks.items.map(({ offset, compressedSize }) => ({ offset, compressedSize })), [
+    { offset: 0, compressedSize: first.length },
+    { offset: 31, compressedSize: second.length },
+  ]);
+  assert.equal(facts.payload.status, 'parsed');
+  // 尾置表布局下偏移仍以数据区起点为基准；第 2 块跨过 16 字节填充取到自己的 LZ4 流。
+  assert.deepEqual(facts.payload.nodes.map(node => node.sha256), [
+    createHash('sha256').update('guoluo-v9-lz4!').digest('hex'),
+    createHash('sha256').update('zhu').digest('hex'),
+  ]);
+});
+
+test('Unity 官方 v9 样本：块偏移来自块表，块间填充为零', { skip: !process.env.GUOLUO_TEST_UNITY_V9 && '设置 GUOLUO_TEST_UNITY_V9 指向 Unity 官方 v9 样本后才执行：v9「已核对」的外部锚点来自这条用例', }, async () => {
+  const path = process.env.GUOLUO_TEST_UNITY_V9;
+  const bytes = await readFile(path);
+  assert.equal(bytes.length, 362352);
+  assert.equal(createHash('sha256').update(bytes).digest('hex'), 'fb116ff6e0e455d2d063dc6f71d05ffa3bf4b6d914c87918bfacd246d6c3b22a');
+  const facts = await inspectUnityHeader(path, bytes.length, 'unity-bundle');
+  assert.equal(facts.formatVersion, 9);
+  assert.equal(facts.unityRevision, '6000.7.0b2');
+  assert.equal(facts.blocksInfo.compression, 'lz4hc');
+  assert.equal(facts.blocks.count, 11);
+  const blocks = facts.blocks.items;
+  assert.deepEqual(blocks.map(({ offset }) => offset), [0, 6352, 136624, 221360, 264880, 296080, 312048, 348976, 349312, 355344, 356032]);
+  // 记录偏移相对数据区；将其加到 dataStart 后核对物理字节，且确实存在填充（否则累加也能过）。
+  let padding = 0;
+  for (let index = 1; index < blocks.length; index += 1) {
+    const previousEnd = blocks[index - 1].offset + blocks[index - 1].compressedSize;
+    assert.ok(blocks[index].offset >= previousEnd, `第 ${index} 块与前一块重叠`);
+    const gap = bytes.subarray(facts.dataStart + previousEnd, facts.dataStart + blocks[index].offset);
+    assert.ok(gap.every(byte => byte === 0), `第 ${index} 块前的填充不是零字节`);
+    padding += gap.length;
+  }
+  assert.equal(padding, 80);
+  assert.equal(facts.dataStart, 288);
+  assert.deepEqual(facts.nodes.items.map(({ path: nodePath, size }) => ({ path: nodePath, size })), [
+    { path: 'BuildPlayer-Scene1.sharedAssets', size: 761460 },
+    { path: 'BuildPlayer-Scene1', size: 17508 },
+    { path: 'BuildPlayer-Scene2.sharedAssets', size: 1413 },
+    { path: 'BuildPlayer-Scene2', size: 17508 },
+  ]);
+  assert.equal(facts.payload.status, 'parsed');
+  assert.equal(facts.payload.nodes.length, 4);
+  // UnityDataTool 2.3.0 独立解出的四个节点指纹，逐项对齐。
+  assert.deepEqual(facts.payload.nodes.map(({ path: nodePath, sha256 }) => ({ path: nodePath, sha256 })), [
+    { path: 'BuildPlayer-Scene1.sharedAssets', sha256: '903228b4c44c540c9480d871223edde4049957390532eb39c8f0b2b6058dfa72' },
+    { path: 'BuildPlayer-Scene1', sha256: '6cb03b57ba3f6667c18eca8625d227d7a376c38d26cb135055dd1abc0f7512ba' },
+    { path: 'BuildPlayer-Scene2.sharedAssets', sha256: '5b8c30385c93aeaf34107ba5f223727b1bb168af4bd40b344da29a323e202c13' },
+    { path: 'BuildPlayer-Scene2', sha256: '5229c0310ec19ef66b1e192003fb5dbe28bd1ca7d4680b058a2e6bfcd586f24e' },
+  ]);
+});
+
 test('UnityFS 拒绝声明不一致、超出数量或路径上限及越界的节点', async () => {
   const dir = await scratch();
   const cases = [
@@ -339,18 +451,15 @@ test('坏头、越界声明与读取期变化都被拒绝', async () => {
   await writeFile(join(dir, 'old.bundle'), old);
   await assert.rejects(inspectUnityHeader(join(dir, 'old.bundle'), old.length, 'unity-bundle'), /格式版本/u);
 
-  // v9 起的块表布局未独立核对：保留头部事实，但不按 10 字节猜块表。
-  const future = unityfs({ version: 9 });
-  await writeFile(join(dir, 'future.bundle'), future);
-  const futureFacts = await inspectUnityHeader(join(dir, 'future.bundle'), future.length, 'unity-bundle');
+  // A v10 header with an intentionally incomplete table must not trigger table parsing.
+  const futureFacts = await inspectFixture(dir, 'future.bundle', unityfs({ version: 10, blockCount: 2 }));
   assert.equal(futureFacts.format, 'unityfs');
-  assert.equal(futureFacts.formatVersion, 9);
+  assert.equal(futureFacts.formatVersion, 10);
   assert.equal(futureFacts.tableLayout, 'unverified');
   assert.equal(futureFacts.blocksInfo.status, 'unsupported');
   assert.equal(futureFacts.blocks, null);
   assert.equal(futureFacts.nodes, null);
   assert.equal(futureFacts.payload.status, 'skipped');
-  assert.match(futureFacts.reason, /块表布局未独立核对/u);
 
   // 同一份内容声明为 v8 时块表照常解析，说明拒绝只针对未核对的版本。
   const supported = unityfs({ version: 8 });
@@ -432,7 +541,7 @@ test('目录盘点登记 Unity 素材行、头部证据、规格与不回放说�
   assert.equal(json.evidence.unity.length, 2);
   assert.equal(json.evidence.unity.find(file => file.path === 'global-metadata.dat').layout, 'unverified');
   assert.match(markdown, /UnityFS 节点 1 \/ 块 1/u);
-  assert.ok(json.unknowns.some(text => text.includes('LZHAM 压缩与 UnityFS 格式版本 9')));
+  assert.ok(json.unknowns.some(text => text.includes('LZHAM 压缩与 UnityFS 格式版本 10')));
   assert.ok(json.unknowns.some(text => text.includes('只记录了头部') && text.includes('尚未核对')));
 
   const mock = await service.mock({ id: added.id, runId: run.runId, port: 5199 });
