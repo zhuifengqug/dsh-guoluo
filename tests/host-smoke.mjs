@@ -1,6 +1,6 @@
 // Run against the installed DSH packages and an unpacked npm tarball, never the desktop profile.
 import assert from 'node:assert/strict';
-import { copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { copyFile, cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
@@ -108,6 +108,16 @@ try {
   const scaffolded = await call('scaffold', { id: siteId, runId: siteRun.runId, name: 'site-copy' });
   assert.equal(scaffolded.counts.copied, 2);
   assert.equal(scaffolded.coverage.verdict, 'complete');
+  assert.equal(scaffolded.coverage.structure.comparedPages, 1);
+  assert.equal(scaffolded.coverage.structure.diverged, false);
+  assert.equal(scaffolded.coverage.structure.navigation.present, 1);
+  // 闭环：把档案里的生成目录放回素材根，再用公开的 check 走一遍，结构维度要认得出复制页。
+  await cp(join(archiveRoot, scaffolded.directory), join(sourceRoot, 'site-copy'), { recursive: true });
+  const closed = await call('check', { id: siteId, runId: siteRun.runId, candidate: { directory: 'site-copy' } });
+  assert.equal(closed.candidate.verdict, 'complete');
+  assert.equal(closed.candidate.structure.comparedPages, 1);
+  assert.equal(closed.candidate.structure.diverged, false);
+  assert.equal(closed.candidate.structure.pages.extra.count, 1);
   const scaffoldManifest = JSON.parse(await readFile(join(archiveRoot, scaffolded.directory, '_scaffold', 'scaffold.json'), 'utf8'));
   assert.equal(scaffoldManifest.runId, siteRun.runId);
   assert.deepEqual(scaffoldManifest.files.map(file => file.origin).sort(), ['copied', 'copied', 'generated', 'generated', 'generated', 'generated']);
@@ -316,7 +326,7 @@ try {
     }
     return { status: measured.visual.status, routes: measured.visual.routeCount, scores: summary.routes.map(route => route.score) };
   })() : null;
-  console.log(JSON.stringify({ result: 'passed', version: probe.pluginVersion, visual, tools: 13, skill: skill.name, command: command.name, liveSettings: true, rea: probe.rea, linkedRea: siteRun.rea.binding.status, derived: { spec: spec.obligations, brief: brief.bytes > 0, tokens: tokens.total, exported: exported.count, mock: mocked.routes, check: checked.verdict, candidate: covered.candidate.verdict, scaffold: scaffolded.counts.copied }, pck: pck.pck.counts.entries, unity: unityDetails.rows[0].blocksInfo.compression, unityV9, il2cpp: il2cppRow.counts.types }));
+  console.log(JSON.stringify({ result: 'passed', version: probe.pluginVersion, visual, tools: 13, skill: skill.name, command: command.name, liveSettings: true, rea: probe.rea, linkedRea: siteRun.rea.binding.status, derived: { spec: spec.obligations, brief: brief.bytes > 0, tokens: tokens.total, exported: exported.count, mock: mocked.routes, check: checked.verdict, candidate: covered.candidate.verdict, scaffold: scaffolded.counts.copied, structure: closed.candidate.structure.comparedPages }, pck: pck.pck.counts.entries, unity: unityDetails.rows[0].blocksInfo.compression, unityV9, il2cpp: il2cppRow.counts.types }));
 } finally {
   await ctx?.fiber.dispose();
   await rm(root, { recursive: true, force: true });

@@ -51,7 +51,9 @@ test('候选覆盖度：找到素材、页面与已声明令牌，缺的逐项�
     assert.match(coverage.note, /1 个同名素材的内容指纹与档案不同/u);
     // 多出来的文件不制造虚假通过，也不进缺口清单。
     assert.equal(coverage.files.total, 3);
-    assert.equal(coverage.unchecked.length, 4);
+    assert.equal(coverage.unchecked.length, 6);
+    assert.equal(coverage.structure.scope, 'candidate-structure');
+    assert.equal(coverage.structure.pages.matched, 1);
     assert.deepEqual(coverage.values.differs, []);
     assert.equal(coverage.values.checked, 1);
     assert.equal(coverage.values.same, 1);
