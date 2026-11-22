@@ -205,6 +205,35 @@ try {
   const peEvidence = JSON.parse(await readFile(peSpec.files.json, 'utf8')).evidence.pe.files;
   assert.equal(peEvidence[0].path, 'demo.dll');
   assert.equal(peEvidence[0].format, 'pe32+');
+  // 合成的 v24 IL2CPP 元数据：264 字节头 + 名字池 + 一条类型定义，验类型名确实读得出来。
+  const il2cppNames = Buffer.from('\0Demo.Type\0', 'latin1');
+  const il2cppTypes = Buffer.alloc(92);
+  il2cppTypes.writeInt32LE(1, 0);
+  const il2cppHeader = Buffer.alloc(8 + 32 * 8);
+  il2cppHeader.writeUInt32LE(0xfab11baf, 0);
+  il2cppHeader.writeInt32LE(24, 4);
+  let il2cppAt = il2cppHeader.length;
+  const placeIl2cpp = (index, bytes) => {
+    il2cppHeader.writeUInt32LE(il2cppAt, 8 + index * 8);
+    il2cppHeader.writeUInt32LE(bytes.length, 8 + index * 8 + 4);
+    il2cppAt += bytes.length;
+    return bytes;
+  };
+  const il2cppStrings = placeIl2cpp(2, il2cppNames);
+  const il2cppTypeTable = placeIl2cpp(19, il2cppTypes);
+  await writeFile(join(sourceRoot, 'global-metadata.dat'), Buffer.concat([il2cppHeader, il2cppStrings, il2cppTypeTable]));
+  const { id: il2cppId } = await call('target_add', { kind: 'local', location: 'global-metadata.dat' });
+  const il2cppRun = await call('dissect', { id: il2cppId });
+  const { rows: [il2cppRow] } = await call('dossier', { id: il2cppId, runId: il2cppRun.runId, kind: 'binary' });
+  assert.equal(il2cppRow.status, 'parsed');
+  assert.equal(il2cppRow.layout, 'verified');
+  assert.equal(il2cppRow.counts.types, 1);
+  const il2cppTypes_page = await call('dossier', { id: il2cppId, runId: il2cppRun.runId, kind: 'il2cpp-types', limit: 1 });
+  assert.equal(il2cppTypes_page.source, 'current-file');
+  assert.equal(il2cppTypes_page.total, 1);
+  assert.deepEqual(il2cppTypes_page.rows.map(row => row.name), ['Demo.Type']);
+  assert.equal(il2cppTypes_page.nextOffset, null);
+
   // apk-pagination.apk 由 aapt2 link 生成，清单里各有 70 条 uses-permission 与 activity。
   await copyFile(new URL('./fixtures/apk-pagination.apk', import.meta.url), join(sourceRoot, 'pagination.apk'));
   const { id: apkId } = await call('target_add', { kind: 'local', location: 'pagination.apk' });
@@ -260,7 +289,7 @@ try {
     }
     return { status: measured.visual.status, routes: measured.visual.routeCount, scores: summary.routes.map(route => route.score) };
   })() : null;
-  console.log(JSON.stringify({ result: 'passed', version: probe.pluginVersion, visual, tools: 12, skill: skill.name, command: command.name, liveSettings: true, rea: probe.rea, linkedRea: siteRun.rea.binding.status, derived: { spec: spec.obligations, brief: brief.bytes > 0, tokens: tokens.total, exported: exported.count, mock: mocked.routes, check: checked.verdict, candidate: covered.candidate.verdict }, pck: pck.pck.counts.entries, unity: unityDetails.rows[0].blocksInfo.compression }));
+  console.log(JSON.stringify({ result: 'passed', version: probe.pluginVersion, visual, tools: 12, skill: skill.name, command: command.name, liveSettings: true, rea: probe.rea, linkedRea: siteRun.rea.binding.status, derived: { spec: spec.obligations, brief: brief.bytes > 0, tokens: tokens.total, exported: exported.count, mock: mocked.routes, check: checked.verdict, candidate: covered.candidate.verdict }, pck: pck.pck.counts.entries, unity: unityDetails.rows[0].blocksInfo.compression, il2cpp: il2cppRow.counts.types }));
 } finally {
   await ctx?.fiber.dispose();
   await rm(root, { recursive: true, force: true });

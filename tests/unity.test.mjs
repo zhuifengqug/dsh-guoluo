@@ -303,22 +303,28 @@ test('UnityFS 在按 codec 跳过表之前拒绝对齐后的负数据区', async
   await assert.rejects(inspectFixture(dir, 'tail-padding.bundle', unityfs({ ...options, declaredSize: bytes.length - 1 })), /数据区长度无效/u);
 });
 
-test('IL2CPP 按白名单版本校验头长，包含共用声明版本的 v24 子版', async () => {
+test('IL2CPP 只对已核对布局的版本读字段表，其余版本只报头', async () => {
   const dir = await scratch();
-  for (const [version, headerBytes] of [[16, 192], [24, 264], [24, 272], [27, 256], [29, 256], [31, 256]]) {
-    const facts = await inspectFixture(dir, `v${version}-${headerBytes}.dat`, il2cpp(version, headerBytes, headerBytes), 'il2cpp-metadata');
-    assert.deepEqual(facts, { format: 'il2cpp-metadata', metadataVersion: version, headerBytes });
+  // v24：264 字节头 + 32 段全零区段表，各段长度 0，应当解析成空表而不是报错。
+  const empty = il2cpp(24, 264);
+  const parsed = await inspectFixture(dir, 'v24-empty.dat', empty, 'il2cpp-metadata');
+  assert.equal(parsed.status, 'parsed');
+  assert.equal(parsed.layout, 'verified');
+  assert.deepEqual(parsed.counts, { types: 0, fields: 0, methods: 0, images: 0, stringLiterals: 0 });
+  assert.deepEqual(parsed.types, []);
+
+  for (const version of [16, 27, 29, 31, 32]) {
+    const facts = await inspectFixture(dir, `v${version}.dat`, il2cpp(version, 256), 'il2cpp-metadata');
+    assert.equal(facts.status, 'unverified');
+    assert.equal(facts.layout, 'unverified');
+    assert.equal(facts.metadataVersion, version);
+    assert.match(facts.reason, /尚未核对/u);
   }
-  for (const version of [0, 17, 18, 25, 26, 28, 30, 32]) {
-    await assert.rejects(inspectFixture(dir, `v${version}.dat`, il2cpp(version), 'il2cpp-metadata'), new RegExp(`版本 ${version} 不在已知白名单`));
-  }
-  await assert.rejects(inspectFixture(dir, 'short-header.dat', il2cpp(24, 264, 263), 'il2cpp-metadata'), /短于版本 24/u);
-  await assert.rejects(inspectFixture(dir, 'past-eof.dat', il2cpp(24, 272, 264), 'il2cpp-metadata'), /偏移 272 越界/u);
-  await assert.rejects(inspectFixture(dir, 'small-offset.dat', il2cpp(29, 12), 'il2cpp-metadata'), /偏移 12 越界/u);
-  assert.deepEqual(await inspectFixture(dir, 'unverified-offset.dat', il2cpp(29, 272), 'il2cpp-metadata'), {
-    format: 'il2cpp-metadata', metadataVersion: 29, headerBytes: 272, headerLayout: 'unverified',
-    reason: '声明头长与已知布局不一致，未核对字段表。',
-  });
+
+  await assert.rejects(inspectFixture(dir, 'short-header.dat', il2cpp(24, 264, 200), 'il2cpp-metadata'), /短于 32 段的头长|头不完整/u);
+  const overrun = il2cpp(24, 264);
+  overrun.writeUInt32LE(8000, 8 + 19 * 8 + 4);
+  await assert.rejects(inspectFixture(dir, 'overrun.dat', overrun, 'il2cpp-metadata'), /区段 typeDefinitions 越界/u);
 });
 
 test('坏头、越界声明与读取期变化都被拒绝', async () => {
@@ -350,11 +356,11 @@ test('坏头、越界声明与读取期变化都被拒绝', async () => {
 
   const notIl2cpp = Buffer.from('notil2cpp', 'latin1');
   await writeFile(join(dir, 'global-metadata.dat'), notIl2cpp);
-  await assert.rejects(inspectUnityHeader(join(dir, 'global-metadata.dat'), notIl2cpp.length, 'il2cpp-metadata'), /头标识无效/u);
+  await assert.rejects(inspectUnityHeader(join(dir, 'global-metadata.dat'), notIl2cpp.length, 'il2cpp-metadata'), /头标识无效|头不完整/u);
 
   const shortMetadata = Buffer.from([0xaf, 0x1b]);
   await writeFile(join(dir, 'short.dat'), shortMetadata);
-  await assert.rejects(inspectUnityHeader(join(dir, 'short.dat'), shortMetadata.length, 'il2cpp-metadata'), /头标识无效或不完整/u);
+  await assert.rejects(inspectUnityHeader(join(dir, 'short.dat'), shortMetadata.length, 'il2cpp-metadata'), /头不完整|头标识无效/u);
 
   const stale = join(dir, 'stale.bundle');
   await writeFile(stale, await stock('unityfs-none.bundle'));
@@ -400,21 +406,21 @@ test('目录盘点登记 Unity 素材行、头部证据、规格与不回放说�
   assert.deepEqual(binary.rows[0].nodes.items, [{ index: 0, path: 'assets/demo/data', offset: 0, size: 14, flags: 4 }]);
   const second = await service.dossier({ id: added.id, runId: run.runId, kind: 'binary', limit: 1, offset: binary.nextOffset });
   assert.equal(second.rows[0].path, 'global-metadata.dat');
-  assert.equal(second.rows[0].status, 'header-read');
-  assert.equal(second.rows[0].headerLayout, 'unverified');
-  assert.equal(second.rows[0].headerBytes, 272);
+  assert.equal(second.rows[0].status, 'unverified');
+  assert.equal(second.rows[0].layout, 'unverified');
+  assert.equal(second.rows[0].declaredHeaderBytes, 272);
   assert.equal(second.nextOffset, null);
 
   const spec = await service.spec({ id: added.id, runId: run.runId });
   const markdown = await readFile(spec.files.markdown, 'utf8');
   assert.match(markdown, /Unity assets\/desktop\.bundle \| UnityFS 6 \/ 2021\.3\.16f1/u);
-  assert.match(markdown, /Unity global-metadata\.dat \| IL2CPP 声明版本 29 \/ 声明头长 272 字节 \/ 声明头长与已知布局不一致，未核对字段表/u);
+  assert.match(markdown, /Unity global-metadata\.dat \| IL2CPP 29 \/ IL2CPP 元数据版本 29 的类型与字段表布局尚未核对/u);
   const json = JSON.parse(await readFile(spec.files.json, 'utf8'));
   assert.equal(json.evidence.unity.length, 2);
-  assert.equal(json.evidence.unity.find(file => file.path === 'global-metadata.dat').headerLayout, 'unverified');
+  assert.equal(json.evidence.unity.find(file => file.path === 'global-metadata.dat').layout, 'unverified');
   assert.match(markdown, /UnityFS 节点 1 \/ 块 1/u);
-  assert.ok(json.unknowns.some(text => text.includes('IL2CPP 元数据字段表')));
-  assert.ok(json.unknowns.some(text => text.includes('仅记录声明头长') && text.includes('未核对字段表')));
+  assert.ok(json.unknowns.some(text => text.includes('LZHAM 压缩明确不支持')));
+  assert.ok(json.unknowns.some(text => text.includes('只记录了头部') && text.includes('尚未核对')));
 
   const mock = await service.mock({ id: added.id, runId: run.runId, port: 5199 });
   const config = JSON.parse(await readFile(mock.files.config, 'utf8'));
@@ -449,8 +455,8 @@ test('binary dossier 限制表明细的字节数，但验证摘要之外的节�
   assert.equal(bad.status, 'unreadable');
   assert.match(bad.reason, /第 99 个节点.*越出数据区/u);
   const unknown = details.rows.find(row => row.path === 'global-metadata.dat');
-  assert.equal(unknown.status, 'unreadable');
-  assert.match(unknown.reason, /版本 32 不在已知白名单/u);
+  assert.equal(unknown.status, 'unverified');
+  assert.match(unknown.reason, /版本 32 的类型与字段表布局尚未核对/u);
 });
 
 test('Unity 盘点分别记录读头失败和预算跳过', async () => {

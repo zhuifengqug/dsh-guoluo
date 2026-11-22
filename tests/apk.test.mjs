@@ -655,7 +655,7 @@ test('工具入口注册 APK 权限与活动类别并返回第二页', async t =
   live.sourceRoot[write](sourceRoot);
   live.archiveRoot[write](archiveRoot);
   const schema = tools.get('guoluo_dossier').parameters;
-  assert.deepEqual(schema.properties.kind.enum, ['asset', 'token', 'navigation', 'reference', 'binary', 'apk-permission', 'apk-activity', 'pe-imports', 'pe-exports']);
+  assert.deepEqual(schema.properties.kind.enum, ['asset', 'token', 'navigation', 'reference', 'binary', 'apk-permission', 'apk-activity', 'pe-imports', 'pe-exports', 'il2cpp-types', 'il2cpp-fields']);
   const exec = { signal: new AbortController().signal };
   const added = await tools.get('guoluo_target_add').execute({ kind: 'local', location: 'tool.apk' }, exec);
   const run = await tools.get('guoluo_dissect').execute({ id: added.id, rea: false }, exec);

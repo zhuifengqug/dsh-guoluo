@@ -2,3 +2,4 @@ node_modules/
 *.tgz
 .aegis-runtime/
 __pycache__/
+docs/aegis/work/*/tmp/
