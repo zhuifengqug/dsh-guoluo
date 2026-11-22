@@ -12,7 +12,7 @@ DSH 0.2.2-rc.5 的本地应用资产档案插件。把静态素材整理成可�
 4. `guoluo_dossier` 传 `id`，可选固定 `runId`、`kind`、`offset`、`limit`。通过 `nextOffset` 翻页。`kind: binary` 分页读 PE 与 Unity 逐文件明细；`kind: apk-permission` 与 `kind: apk-activity` 分页读 APK 清单里已落盘的权限与活动，旧批次只存首页时回执 `stale: true`，需要重新盘点才能看到后段。`kind: pe-imports` 与 `kind: pe-exports` 回到登记的 PE 源文件现解析，按 `offset`/`limit` 分页读完整导入符号与命名导出（几千条也可翻完；同一档案登记多个 PE 时用 `path` 指明，`path` 是相对登记位置的路径）。`kind: il2cpp-types` 与 `kind: il2cpp-fields` 回到登记的 `global-metadata.dat` 现解析，按 `offset`/`limit` 分页读类型名（含命名空间、声明类型、字段/方法计数）与字段名（含类型索引、声明类型与 token）；只对已核对布局的版本生效，未核对版本回 `status: unverified` 与原因，多个元数据文件时用 `path` 指明。这类符号页的 `total` 是本次可翻阅的条数、`nextOffset` 为 `null` 即读完、`source: current-file` 表示符号来自当前源文件而不是历史快照，`namedCount` 给出导出表声明的总数；读取预算用尽时 `status: partial` 且 `incomplete: true`，`note` 明确「翻页结束不代表读完整张表」。证据行总量 512 KiB 的 `clipped` 只作用于 `binary`/`apk-*` 这类落盘证据页；一条证据始终完整返回，单条超出预算时独占一页。所有分页每次最多 50 条。
 5. `guoluo_spec`、`guoluo_tokens`、`guoluo_export` 把一批证据转成派生产物，默认取最新批次。
 6. `guoluo_brief` 传 `id` 与必填的 `runId`，把这一批证据写成复刻交接单：先做哪些 HTML 入口、参考哪些素材与令牌、哪些声明有待确认、按什么顺序验收。它只写档案里的 `brief/<runId>.md`，不启动子代理、不落地工程（要静态工程骨架用 `guoluo_scaffold`）。不能省略 `runId`——派生产物按批次固定，避免交接单悄悄换了依据。
-7. `guoluo_check` 核对证据自洽性。传 `candidate: { "directory": "my-rebuild" }` 按规格核对候选工程目录里的素材、页面与令牌是否对得上，并在同一回执里给出页面结构比对（选择器、链接目标、标签层级）。传 `visual: { "candidateDirectory": "my-rebuild" }` 可核对默认入口的渲染差异。多页核对通过 `visual.routes` 指定基准和候选的 HTML 文件，每页比较 390、768、1440 三档宽度，高度固定为 900。
+7. `guoluo_check` 核对证据自洽性。传 `candidate: { "directory": "my-rebuild" }` 按规格核对候选工程目录里的素材、页面与令牌是否对得上，并在同一回执里给出页面结构比对（选择器、链接目标、标签层级），同时把结构缺口写成同目录的 `check-<ts>-<uuid>.md` 核对报告。传 `visual: { "candidateDirectory": "my-rebuild" }` 可核对默认入口的渲染差异。多页核对通过 `visual.routes` 指定基准和候选的 HTML 文件，每页比较 390、768、1440 三档宽度，高度固定为 900。
 8. `guoluo_scaffold` 传 `id`，可选 `runId` 与目录名 `name`，在档案的 `scaffold/<name>/` 下生成最小可运行静态工程：已盘点的页面、样式、图片、字体与音视频按素材根内相对路径逐字节复制并核对档案指纹，另加 `_scaffold/index.html` 路由索引、`tokens.css`/`tokens.tailwind.css` 与 `_scaffold/scaffold.json` 逐文件清单；生成后立刻按同一批规格做一次文件层覆盖核对并回执 `coverage`。只写档案根、只生成不启动、不执行素材脚本；同名目录已存在时拒绝覆盖。
 9. `/guoluo list` 列档案，`/guoluo status <id>` 看状态；也可用 `guoluo_list`、`guoluo_status`。
 
@@ -31,6 +31,7 @@ DSH 0.2.2-rc.5 的本地应用资产档案插件。把静态素材整理成可�
 | `guoluo_mock` | `<id>/mock/mock.json`、`server.mjs` | 零依赖回放服务：静态链接回占位页，素材按素材根发原始字节，其余 404 |
 | `guoluo_scaffold` | `<id>/scaffold/<name>/` 下的素材副本、`_scaffold/{index.html,tokens.css,tokens.tailwind.css,scaffold.json}`、`README.md` | 最小可运行静态工程：素材逐字节复制并核指纹，另生成路由索引、令牌表与逐文件清单；生成后即做文件层覆盖核对 |
 | `guoluo_check` | `<id>/checks/check-<ts>-<uuid>.json` | 覆盖度核对：漏项、悬空证据、与已落盘规格的批次偏差；可选候选工程覆盖度（文件层 + 页面结构层）与视觉比对 |
+| `guoluo_check`（结构报告） | `<id>/checks/check-<ts>-<uuid>.md` | 候选结构缺口报告：按证据页分组列出缺的选择器、链接目标、标签数量与深度分布，并单列未核页、缺页与候选多出的页 |
 | `guoluo_check`（视觉） | `<id>/checks/check-<ts>-<uuid>/` 下的 `summary.json`、`r<n>-<w>-{before,after}.{artifact.json,png}`、`r<n>-<w>-diff.json` | 逐路由、逐视口的核对结果与截图证据 |
 
 `spec` 不是设计文档生成器：它把已有证据翻译成"必须复刻什么"，每条都能回查到文件与行号。证据没覆盖的东西一律进 `unknowns`，不补写、不推测。
@@ -44,6 +45,8 @@ DSH 0.2.2-rc.5 的本地应用资产档案插件。把静态素材整理成可�
 `check` 的候选工程覆盖度独立呈报。传 `candidate: { "directory": "my-rebuild" }`（素材根内的目录）后，插件逐个核对规格声明的素材文件、页面入口与同名样式令牌是否出现在候选目录里：素材按相对路径比对，页面按路径或同名文件比对，令牌在候选 CSS 文本里检索同名声明。归档成员（ASAR、APK、PCK）不回放也不判缺失，只标成归档来源。结果分 `present`、`missing`、`archived`、`changed` 四组：找得到且内容一致进 `present` 并标 `same: true`，同名但 SHA-256 不同的进 `changed` 并并列两边指纹。`verdict` 为 `partial` 说明有找不到的对象——文件层面对不上，**不说明结构与行为等价**。令牌另外逐字符比对声明值（仅去首尾空白），同名的值不同时进 `values.differs` 并并列档案值与候选值；取值差异不算缺失，`verdict` 只看有没有找到，`values.method` 与 `unchecked` 写明不展开简写、不解析 `var()`、不比较计算值与级联结果。
 
 同一份回执里的 `structure` 是结构维度，独立于文件层计数：证据侧页面从素材根按盘点行重读（同一套路径校验与预算），候选侧页面来自候选目录里的 `.html`/`.htm`，两侧都用 parse5 静态解析成结构事实后比对四件事——页面清单（缺页进 `pages.missing`，候选多出来的页面进 `pages.extra` 并在 `_scaffold/` 下时标 `generated: true`，多出来的不算缺口）、`id`/`class` 选择器集合（进 `selectors.missing`）、`a[href]` 原文目标（进 `navigation.missing`；同一目标出现在别的候选页时记 `elsewhere`；`#` 锚点、空目标与 `javascript:`/`mailto:`/`tel:`/`data:` 不进比较，计入 `navigation.skipped`）、标签层级（标签计数、父子边与「深度:标签」分布进 `hierarchy`）。解析不出、没读到或被节点预算截断的页面进 `structure.unverified`，**不计失败也不代表一致**。结构维度有任何缺口时 `verdict` 落到 `partial`，`note` 会写明缺口数与未核数。`complete` 只说明文件层与结构层都对得上，不说明样式、布局、脚本行为或业务逻辑等价，更不说明目标已被复刻。
+
+回执里的 JSON 清单只留每节前 20 条摘要；同目录的 `<checkId>.md` 是给人读的核对报告：按证据页分组列出缺失的 `#id`/`.class`、`a[href]` 目标、标签数量与深度分布（每节最多列 100 条并注明余量），再单列未核页面（带原因）、候选里找不到的证据页、候选多出的页面（`_scaffold/` 生成页标「生成物」）。报告只复述静态解析出的事实，路径由回执的 `candidate.report` 给出；不生成报告的场合只有一种——候选核对本身没跑起来（回执里 `candidate.verdict` 为 `blocked`）。
 
 `check` 的视觉部分独立呈报。显式传 `visual` 后，插件会启动隔离的无头 Chromium，禁用脚本并只加载本地静态服务。`candidateDirectory` 是素材根内的候选目录。下面例子核对首页和文档页，两个 `Entry` 字段分别相对于基准和候选目录。
 

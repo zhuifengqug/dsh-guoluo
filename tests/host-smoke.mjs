@@ -118,6 +118,13 @@ try {
   assert.equal(closed.candidate.structure.comparedPages, 1);
   assert.equal(closed.candidate.structure.diverged, false);
   assert.equal(closed.candidate.structure.pages.extra.count, 1);
+  // 结构缺口报告与 JSON 回执同目录落盘，且回执里有路径。
+  assert.match(closed.candidate.report, /checks[/\\]check-\d+-[0-9a-f-]+\.md$/u);
+  assert.equal(closed.candidate.report, closed.file.replace(/\.json$/u, '.md'));
+  const reportText = await readFile(closed.candidate.report, 'utf8');
+  assert.match(reportText, /^# 结构核对报告/mu);
+  assert.match(reportText, /## 对得上的页面（1）/u);
+  assert.match(reportText, /\| 结构结论 \| 四项均对得上 \|/u);
   const scaffoldManifest = JSON.parse(await readFile(join(archiveRoot, scaffolded.directory, '_scaffold', 'scaffold.json'), 'utf8'));
   assert.equal(scaffoldManifest.runId, siteRun.runId);
   assert.deepEqual(scaffoldManifest.files.map(file => file.origin).sort(), ['copied', 'copied', 'generated', 'generated', 'generated', 'generated']);
@@ -326,7 +333,7 @@ try {
     }
     return { status: measured.visual.status, routes: measured.visual.routeCount, scores: summary.routes.map(route => route.score) };
   })() : null;
-  console.log(JSON.stringify({ result: 'passed', version: probe.pluginVersion, visual, tools: 13, skill: skill.name, command: command.name, liveSettings: true, rea: probe.rea, linkedRea: siteRun.rea.binding.status, derived: { spec: spec.obligations, brief: brief.bytes > 0, tokens: tokens.total, exported: exported.count, mock: mocked.routes, check: checked.verdict, candidate: covered.candidate.verdict, scaffold: scaffolded.counts.copied, structure: closed.candidate.structure.comparedPages }, pck: pck.pck.counts.entries, unity: unityDetails.rows[0].blocksInfo.compression, unityV9, il2cpp: il2cppRow.counts.types }));
+  console.log(JSON.stringify({ result: 'passed', version: probe.pluginVersion, visual, tools: 13, skill: skill.name, command: command.name, liveSettings: true, rea: probe.rea, linkedRea: siteRun.rea.binding.status, derived: { spec: spec.obligations, brief: brief.bytes > 0, tokens: tokens.total, exported: exported.count, mock: mocked.routes, check: checked.verdict, candidate: covered.candidate.verdict, scaffold: scaffolded.counts.copied, structure: closed.candidate.structure.comparedPages, report: closed.candidate.report ? 1 : 0 }, pck: pck.pck.counts.entries, unity: unityDetails.rows[0].blocksInfo.compression, unityV9, il2cpp: il2cppRow.counts.types }));
 } finally {
   await ctx?.fiber.dispose();
   await rm(root, { recursive: true, force: true });
