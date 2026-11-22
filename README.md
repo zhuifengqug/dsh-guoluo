@@ -11,9 +11,10 @@ DSH 0.2.2-rc.5 的本地应用资产档案插件。把静态素材整理成可�
 3. `guoluo_dissect` 传档案 `id`，返回批次 `runId`、证据数量、覆盖说明、耗时与 REA 绑定结果。目录型素材会自动调用 REA 分析并把摘要绑定到本次素材的路径与根哈希；传 `"rea": false` 可跳过，`reaTimeoutMs` 可覆盖超时。APK、PCK、PE 与 Unity 素材只做静态解析，不触发 REA。
 4. `guoluo_dossier` 传 `id`，可选固定 `runId`、`kind`、`offset`、`limit`。通过 `nextOffset` 翻页。`kind: binary` 分页读 PE 与 Unity 逐文件明细；`kind: apk-permission` 与 `kind: apk-activity` 分页读 APK 清单里已落盘的权限与活动，旧批次只存首页时回执 `stale: true`，需要重新盘点才能看到后段。`kind: pe-imports` 与 `kind: pe-exports` 回到登记的 PE 源文件现解析，按 `offset`/`limit` 分页读完整导入符号与命名导出（几千条也可翻完；同一档案登记多个 PE 时用 `path` 指明，`path` 是相对登记位置的路径）。`kind: il2cpp-types` 与 `kind: il2cpp-fields` 回到登记的 `global-metadata.dat` 现解析，按 `offset`/`limit` 分页读类型名（含命名空间、声明类型、字段/方法计数）与字段名（含类型索引、声明类型与 token）；只对已核对布局的版本生效，未核对版本回 `status: unverified` 与原因，多个元数据文件时用 `path` 指明。这类符号页的 `total` 是本次可翻阅的条数、`nextOffset` 为 `null` 即读完、`source: current-file` 表示符号来自当前源文件而不是历史快照，`namedCount` 给出导出表声明的总数；读取预算用尽时 `status: partial` 且 `incomplete: true`，`note` 明确「翻页结束不代表读完整张表」。证据行总量 512 KiB 的 `clipped` 只作用于 `binary`/`apk-*` 这类落盘证据页；一条证据始终完整返回，单条超出预算时独占一页。所有分页每次最多 50 条。
 5. `guoluo_spec`、`guoluo_tokens`、`guoluo_export` 把一批证据转成派生产物，默认取最新批次。
-6. `guoluo_brief` 传 `id` 与必填的 `runId`，把这一批证据写成复刻交接单：先做哪些 HTML 入口、参考哪些素材与令牌、哪些声明有待确认、按什么顺序验收。它只写档案里的 `brief/<runId>.md`，不启动子代理、不生成工程。不能省略 `runId`——派生产物按批次固定，避免交接单悄悄换了依据。
+6. `guoluo_brief` 传 `id` 与必填的 `runId`，把这一批证据写成复刻交接单：先做哪些 HTML 入口、参考哪些素材与令牌、哪些声明有待确认、按什么顺序验收。它只写档案里的 `brief/<runId>.md`，不启动子代理、不落地工程（要静态工程骨架用 `guoluo_scaffold`）。不能省略 `runId`——派生产物按批次固定，避免交接单悄悄换了依据。
 7. `guoluo_check` 核对证据自洽性。传 `candidate: { "directory": "my-rebuild" }` 按规格核对候选工程目录里的素材、页面与令牌是否对得上（只看文件层，不看结构与行为）。传 `visual: { "candidateDirectory": "my-rebuild" }` 可核对默认入口的渲染差异。多页核对通过 `visual.routes` 指定基准和候选的 HTML 文件，每页比较 390、768、1440 三档宽度，高度固定为 900。
-8. `/guoluo list` 列档案，`/guoluo status <id>` 看状态；也可用 `guoluo_list`、`guoluo_status`。
+8. `guoluo_scaffold` 传 `id`，可选 `runId` 与目录名 `name`，在档案的 `scaffold/<name>/` 下生成最小可运行静态工程：已盘点的页面、样式、图片、字体与音视频按素材根内相对路径逐字节复制并核对档案指纹，另加 `_scaffold/index.html` 路由索引、`tokens.css`/`tokens.tailwind.css` 与 `_scaffold/scaffold.json` 逐文件清单；生成后立刻按同一批规格做一次文件层覆盖核对并回执 `coverage`。只写档案根、只生成不启动、不执行素材脚本；同名目录已存在时拒绝覆盖。
+9. `/guoluo list` 列档案，`/guoluo status <id>` 看状态；也可用 `guoluo_list`、`guoluo_status`。
 
 随包提供 `guoluo-rebuild` 技能。档案索引和独立批次保存在档案根的 `<id>/target.json` 与 `<id>/runs/<runId>.json`。请使用单独的归档目录；不要在盘点时改动、移动或替换素材目录与档案目录中的条目。
 
@@ -28,12 +29,15 @@ DSH 0.2.2-rc.5 的本地应用资产档案插件。把静态素材整理成可�
 | `guoluo_export` | `<id>/export/assets.{json,md,csv}` | 资产清单，可按类别过滤 |
 | `guoluo_brief` | `<id>/brief/<runId>.md` | 复刻交接单：入口、素材、令牌、待确认项与验收顺序；只读同一批次证据 |
 | `guoluo_mock` | `<id>/mock/mock.json`、`server.mjs` | 零依赖回放服务：静态链接回占位页，素材按素材根发原始字节，其余 404 |
+| `guoluo_scaffold` | `<id>/scaffold/<name>/` 下的素材副本、`_scaffold/{index.html,tokens.css,tokens.tailwind.css,scaffold.json}`、`README.md` | 最小可运行静态工程：素材逐字节复制并核指纹，另生成路由索引、令牌表与逐文件清单；生成后即做文件层覆盖核对 |
 | `guoluo_check` | `<id>/checks/check-<ts>-<uuid>.json` | 覆盖度核对：漏项、悬空证据、与已落盘规格的批次偏差；可选候选工程覆盖度与视觉比对 |
 | `guoluo_check`（视觉） | `<id>/checks/check-<ts>-<uuid>/` 下的 `summary.json`、`r<n>-<w>-{before,after}.{artifact.json,png}`、`r<n>-<w>-diff.json` | 逐路由、逐视口的核对结果与截图证据 |
 
 `spec` 不是设计文档生成器：它把已有证据翻译成"必须复刻什么"，每条都能回查到文件与行号。证据没覆盖的东西一律进 `unknowns`，不补写、不推测。
 
 `mock` 只生成文件、不代为启动；返回的 `start` 是可直接复制执行的命令。它不伪造未观测到的页面结构，占位页会写明证据位置。
+
+`scaffold` 不是工程生成器：它只把已盘点的静态素材按原相对路径搬成一份可直接打开或 `python -m http.server` 起来的目录，再加索引、令牌与清单。素材字节与档案指纹不一致（盘点后源文件变过）时逐项跳过并写进 `skipped`，不把未核对的字节当证据；素材里出现 `README.md` 或 `_scaffold/` 同名路径时直接拒绝，不写半截工程。归档成员、可执行文件与非静态条目不复刻，覆盖度会照实把它们记为缺口。它返回的 `coverage` 只说明文件层面对得上，不说明结构、样式或行为等价。
 
 `check` 是 fail-closed 的：`verdict` 为 `complete` 只表示本批证据与义务互相对齐，**不表示目标已被复刻**。有漏项、悬空证据或规格与最新批次不一致时给 `blocked`，同名令牌多值给 `needs-decision`。
 
@@ -73,7 +77,7 @@ DSH 0.2.2-rc.5 的本地应用资产档案插件。把静态素材整理成可�
 
 ## 当前不做
 
-不生成复刻工程、不接入 craft-anything 执行后端或小说流程；Unity 只对节点做指纹登记，不保存节点内容、不读方法体、不反编译；IL2CPP 只登记类型名与字段名（未核对版本连这一步都不做）。扫描有数量、深度和大小预算，命中时在覆盖字段或局限中可见。只写档案根；**默认**不启动目标应用、目标脚本或浏览器，只有显式传 `visual` 才启动插件自己起的隔离 Chromium。REA 分析只接受目录，ASAR、APK、PCK、PE 与单文件需先解包成目录。
+不接入 craft-anything 执行后端或小说流程，也不生成框架工程或业务代码：`scaffold` 只产出逐字节复制的静态素材目录加索引、令牌与清单，不含脚手架、路由框架、状态管理与构建配置；Unity 只对节点做指纹登记，不保存节点内容、不读方法体、不反编译；IL2CPP 只登记类型名与字段名（未核对版本连这一步都不做）。扫描有数量、深度和大小预算，命中时在覆盖字段或局限中可见。只写档案根；**默认**不启动目标应用、目标脚本或浏览器，只有显式传 `visual` 才启动插件自己起的隔离 Chromium。REA 分析只接受目录，ASAR、APK、PCK、PE 与单文件需先解包成目录。
 
 ## 开发
 

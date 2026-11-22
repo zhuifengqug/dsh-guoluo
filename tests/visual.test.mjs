@@ -501,20 +501,26 @@ test('REA 的平均或峰值通道差值与自算不符时同样记 conflict', a
 
 test('非 8 位 PNG 让该档 blocked 并标记 unsupported-png，不再猜数值', async t => {
   const { source } = await fixture(t);
-  const dir = await mkdtemp(join(tmpdir(), 'guoluo-visual-depth-'));
-  t.after(() => rm(dir, { recursive: true, force: true, maxRetries: 5 }));
   const previous = process.env.GUOLUO_FAKE_PNG_DEPTH;
-  process.env.GUOLUO_FAKE_PNG_DEPTH = '16';
   let measured;
   try {
-    measured = await comparePages({ baseline: await visualPage(join(source, 'original'), 'index.html'),
-      candidate: await visualPage(join(source, 'candidate'), 'index.html'), dir, reaPath: fakeRea, channelThreshold: 0, launch: fakeLaunch });
+    process.env.GUOLUO_FAKE_PNG_DEPTH = '16';
+    // 这条用例测的是 PNG 位深判定，不是进程稳定性：整轮回归里同时起大量子进程时，
+    // 偶发的 spawn/句柄失败会让该档落到 environment。每次重试用新的临时目录，
+    // 既吸收瞬时失败，也避免上一次的半截产物被下一次读到；断言口径不变。
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const dir = await mkdtemp(join(tmpdir(), 'guoluo-visual-depth-'));
+      t.after(() => rm(dir, { recursive: true, force: true, maxRetries: 5 }));
+      measured = await comparePages({ baseline: await visualPage(join(source, 'original'), 'index.html'),
+        candidate: await visualPage(join(source, 'candidate'), 'index.html'), dir, reaPath: fakeRea, channelThreshold: 0, launch: fakeLaunch });
+      if (measured.kind !== 'environment') break;
+    }
   } finally {
     if (previous === undefined) delete process.env.GUOLUO_FAKE_PNG_DEPTH;
     else process.env.GUOLUO_FAKE_PNG_DEPTH = previous;
   }
-  assert.equal(measured.status, 'blocked');
-  assert.equal(measured.kind, 'unsupported-png');
+  assert.equal(measured.status, 'blocked', `首轮状态：${JSON.stringify(measured.rounds?.[0] ?? null)}`);
+  assert.equal(measured.kind, 'unsupported-png', `首轮原因：${JSON.stringify(measured.rounds?.[0]?.reason ?? measured.reason ?? measured.kind)}`);
   assert.equal(measured.rounds.length, 1, 'blocked 后不再继续猜后面的档位');
   const round = measured.rounds[0];
   assert.equal(round.status, 'blocked');
