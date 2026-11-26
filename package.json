@@ -1,6 +1,6 @@
 {
   "name": "@zhuifengqug/dsh-guoluo",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "虫珀·蜾蠃：把应用的资产与可见行为整理成可追溯的项目档案",
   "license": "MIT",
   "author": "zhuifengqug",
@@ -8,11 +8,13 @@
   "main": "index.js",
   "exports": {
     ".": "./index.js",
+    "./client": "./client.js",
     "./icon": "./icon.svg",
     "./package.json": "./package.json"
   },
   "files": [
     "index.js",
+    "client.js",
     "lib/",
     "skills/",
     "icon.svg",
@@ -37,6 +39,15 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-ui-layout"
+      ]
     }
   },
   "dshTarget": "0.2.2-rc.5"

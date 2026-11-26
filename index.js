@@ -1,10 +1,13 @@
 import Schema from '@deepseek-ai/schemastery';
 import { readFileSync } from 'node:fs';
 import { projectService } from './lib/projects.mjs';
+import { createWorkbench } from './lib/workbench.mjs';
 import { checkTimeoutMs } from './lib/visual.mjs';
 
+const { version: pluginVersion } = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'));
+
 export const name = 'guoluo';
-export const inject = ['tools', 'commands', 'skills', 'settings'];
+export const inject = ['tools', 'commands', 'skills', 'settings', 'webServer'];
 const pathSetting = description => Schema.string().default('').description(description).extra('volatile', true);
 export const Config = Schema.object({
   sourceRoot: pathSetting('素材根：已存在的本地素材目录（绝对路径）'),
@@ -25,8 +28,78 @@ const output = {
 };
 const summary = '把本地 HTML/CSS、素材目录或 Electron ASAR 盘点成可追溯档案；按类别查看资产、CSS 变量和静态导航证据。';
 
+// 工作台走浏览器里的同一条 HTTP 载体，所以响应必须是自带的 JSON：
+// 状态码要说实话（400 是输入错、500 是环境错），否则面板会把故障当成功渲染。
+const jsonHeaders = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' };
+
+function sendJson(res, status, body, extra = {}) {
+  const text = JSON.stringify(body);
+  res.writeHead(status, { ...jsonHeaders, 'content-length': Buffer.byteLength(text), ...extra });
+  res.end(text);
+}
+
+function queryNumber(url, key, fallback) {
+  const raw = url.searchParams.get(key);
+  if (raw === null || raw === '') return fallback;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) && value >= 0 ? value : fallback;
+}
+
+function isSameOrigin(req) {
+  const origin = req.headers?.origin;
+  if (!origin) return true;
+  try { return new URL(origin).host === req.headers?.host; } catch { return false; }
+}
+
+async function handleWorkbenchRequest({ req, res, workbench, ctx }) {
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    sendJson(res, 405, { ok: false, text: '工作台接口只读：只接受 GET。' }, { allow: 'GET, HEAD' });
+    return;
+  }
+  if (!isSameOrigin(req)) { sendJson(res, 403, { ok: false, text: '不允许的来路。' }); return; }
+  try {
+    const rejected = typeof ctx.get === 'function' ? ctx.get('connection')?.requestRejection?.({ headers: req.headers }) : undefined;
+    if (rejected) { sendJson(res, typeof rejected === 'number' ? rejected : 403, { ok: false, text: '不允许的来路。' }); return; }
+  } catch { /* 没有 connection 服务就只靠同源判断 */ }
+
+  const url = new URL(req.url ?? '/', 'http://localhost');
+  const tail = url.pathname.replace(/^\/api\/guoluo/u, '').replace(/\/+$/u, '');
+  try {
+    if (!tail) {
+      sendJson(res, 200, {
+        ok: true, service: 'guoluo', version: pluginVersion,
+        endpoints: ['overview', 'project?id=', 'evidence?id=&runId=&kind=&offset=&limit='],
+        note: '只读投影：数据与 guoluo_* 工具同源，不写档案、不执行素材。',
+      });
+      return;
+    }
+    if (tail === '/overview') {
+      sendJson(res, 200, await workbench.overview({ offset: queryNumber(url, 'offset', 0), limit: queryNumber(url, 'limit', 20) }));
+      return;
+    }
+    if (tail === '/project') {
+      sendJson(res, 200, await workbench.project({ id: url.searchParams.get('id') ?? undefined }));
+      return;
+    }
+    if (tail === '/evidence') {
+      sendJson(res, 200, await workbench.evidence({
+        id: url.searchParams.get('id') ?? undefined,
+        runId: url.searchParams.get('runId') ?? undefined,
+        kind: url.searchParams.get('kind') ?? undefined,
+        offset: queryNumber(url, 'offset', 0),
+        limit: queryNumber(url, 'limit', 20),
+      }));
+      return;
+    }
+    sendJson(res, 404, { ok: false, text: '没有这个接口。可用的有 overview、project、evidence。' });
+  } catch (error) {
+    sendJson(res, error?.kind === 'invalid-input' ? 400 : 500, { ok: false, text: String(error?.message ?? error).slice(0, 2000) });
+  }
+}
+
 export function apply(ctx, config = {}) {
   const projects = projectService(config);
+  const workbench = createWorkbench({ projects, version: pluginVersion });
   const add = (suffix, description, properties, required, execute, timeoutMs = 10000) => {
     ctx.effect(() => ctx.tools.register({
       name: `guoluo_${suffix}`, description,
@@ -77,6 +150,26 @@ export function apply(ctx, config = {}) {
   }, ['id'], projects.run, 2400000);
   add('list', '列出已登记的蜾蠃档案。', { offset, limit }, [], projects.list);
   add('status', '查看某个档案最近的盘点和批次数。', { id }, ['id'], projects.status);
+  add('workbench', '复刻工作台的只读读模型，与浏览器工作台面板同一份数据。view=overview 列档案与各产物目录条数；view=project 给单个档案的产物、最近一批证据概要与下一步；view=evidence 按 offset/limit 分页读证据行。', {
+    view: enumeration('overview', 'project', 'evidence'),
+    id, runId: string(50),
+    kind: enumeration('asset', 'token', 'navigation', 'reference'),
+    offset, limit,
+  }, ['view'], (args, signal) => {
+    if (args.view === 'overview') return workbench.overview({ offset: args.offset, limit: args.limit }, signal);
+    if (args.view === 'project') return workbench.project({ id: args.id }, signal);
+    return workbench.evidence({ id: args.id, runId: args.runId, kind: args.kind, offset: args.offset, limit: args.limit }, signal);
+  });
+  // G 要的入口在这里：浏览器里那一半与这边共用同一批只读方法。
+  // webServer 不是硬依赖——无界面宿主（隔离 smoke、CLI）照样能用全部工具。
+  const webServer = typeof ctx.get === 'function' ? ctx.get('webServer') : undefined;
+  if (webServer && typeof webServer.register === 'function') {
+    ctx.effect(() => webServer.register({
+      kind: 'prefix',
+      path: '/api/guoluo',
+      handler: (req, res) => handleWorkbenchRequest({ req, res, workbench, ctx }),
+    }), 'guoluo: workbench');
+  }
   const skill = readFileSync(new URL('./skills/guoluo-rebuild/SKILL.md', import.meta.url), 'utf8');
   const body = skill.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/u, '');
   ctx.effect(() => ctx.skills.register({ name: 'guoluo-rebuild', description: summary, content: body, source: 'runtime', provider: name }));

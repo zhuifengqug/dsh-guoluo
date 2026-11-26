@@ -54,7 +54,16 @@ try {
   await mkdir(archiveRoot);
   await symlink(packageDir, join(scope, 'dsh-guoluo'), process.platform === 'win32' ? 'junction' : 'dir');
   await writeFile(join(dir, 'package.json'), JSON.stringify({ name: profile, private: true, dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', packageName] } } }));
-  await writeFile(join(dir, 'cordis.patch.yml'), '[]\n');
+  // 宿主得真有一台 HTTP 服务器，工作台那半端才有东西可挂：port 0 让系统分配，避免撞端口。
+  await writeFile(join(dir, 'cordis.patch.yml'), [
+    '- insert:',
+    '    - id: guoluo-smoke-webserver',
+    "      name: '@deepseek-ai/dsh-host-webserver'",
+    '      config:',
+    '        host: 127.0.0.1',
+    '        port: 0',
+    '',
+  ].join('\n'));
   await writeFile(join(sourceRoot, 'design.css'), ':root{--accent:#112233}');
   const fakeRea = join(root, 'fake-rea.mjs');
   await writeFile(fakeRea, FAKE_REA);
@@ -63,12 +72,29 @@ try {
   const desc = settings.describe().find(row => row.ns === 'guoluo');
   assert.equal(desc?.autoGenerate, true);
   const tools = ctx.get('tools');
-  assert.deepEqual(tools.schemas().map(tool => tool.name).filter(name => name.startsWith('guoluo_')).sort(), ['guoluo_brief', 'guoluo_check', 'guoluo_dissect', 'guoluo_dossier', 'guoluo_export', 'guoluo_list', 'guoluo_mock', 'guoluo_probe', 'guoluo_run', 'guoluo_scaffold', 'guoluo_spec', 'guoluo_status', 'guoluo_target_add', 'guoluo_tokens']);
+  assert.deepEqual(tools.schemas().map(tool => tool.name).filter(name => name.startsWith('guoluo_')).sort(), ['guoluo_brief', 'guoluo_check', 'guoluo_dissect', 'guoluo_dossier', 'guoluo_export', 'guoluo_list', 'guoluo_mock', 'guoluo_probe', 'guoluo_run', 'guoluo_scaffold', 'guoluo_spec', 'guoluo_status', 'guoluo_target_add', 'guoluo_tokens', 'guoluo_workbench']);
   const call = (suffix, args) => tools.get(`guoluo_${suffix}`).execute(args, { signal: AbortSignal.timeout(15000) });
   assert.equal((await call('probe', {})).directories.ready, false);
   await settings.update('guoluo', { sourceRoot, archiveRoot }, desc.revision);
   const probe = await call('probe', {});
   assert.equal(probe.directories.ready, true);
+  // 浏览器那一半读的是同一个投影：路由要真挂在宿主 webServer 上，真同源放行，非 GET 真给 405。
+  const origin = ctx.get('webServer')?.getOrigin?.();
+  assert.ok(origin, '宿主没有给出 webServer origin');
+  const overviewRes = await fetch(`${origin}/api/guoluo/overview`);
+  assert.equal(overviewRes.status, 200);
+  assert.equal(overviewRes.headers.get('cache-control'), 'no-store');
+  const overviewBody = await overviewRes.json();
+  assert.equal(overviewBody.ok, true);
+  assert.equal(overviewBody.service, 'guoluo');
+  assert.equal(overviewBody.status, 'ready');
+  const refusedRes = await fetch(`${origin}/api/guoluo/overview`, { method: 'POST' });
+  assert.equal(refusedRes.status, 405);
+  assert.equal(refusedRes.headers.get('allow'), 'GET, HEAD');
+  const manifest = JSON.parse(await readFile(join(packageDir, 'package.json'), 'utf8'));
+  assert.equal(manifest.exports['./client'], './client.js');
+  assert.equal(manifest.dsh.client.platform, 'web');
+  assert.ok(manifest.files.includes('client.js'), '打包清单里没有 client.js，装上去就没有界面');
   const skill = await ctx.get('skills').get('guoluo-rebuild', { cwd: root });
   assert.equal(skill?.provider, 'guoluo');
   const command = ctx.get('commands').find({}, 'guoluo');
@@ -146,6 +172,20 @@ try {
   const packSummary = JSON.parse(await readFile(join(archiveRoot, packed.directory, 'pack.json'), 'utf8'));
   assert.equal(packSummary.runId, siteRun.runId);
   assert.equal(packSummary.steps.length, 8);
+  // 工作台与工具同源：出包之后面板上这个档案应当是 packed，最近一批就是刚才那一批。
+  const wbOverview = await call('workbench', { view: 'overview' });
+  assert.equal(wbOverview.status, 'ready');
+  assert.ok(wbOverview.projects.some(row => row.id === siteId && row.stage === 'packed'));
+  const wbProject = await call('workbench', { view: 'project', id: siteId });
+  assert.equal(wbProject.project.stage, 'packed');
+  assert.equal(wbProject.latestRun.runId, siteRun.runId);
+  assert.ok(wbProject.project.artifacts.pack.entries >= 1);
+  const wbEvidence = await call('workbench', { view: 'evidence', id: siteId, kind: 'asset', limit: 1 });
+  assert.equal(wbEvidence.returned, 1);
+  assert.equal(wbEvidence.nextOffset, 1);
+  const projectRes = await fetch(`${origin}/api/guoluo/project?id=${siteId}`);
+  assert.equal(projectRes.status, 200);
+  assert.equal((await projectRes.json()).project.stage, 'packed');
   await copyFile(new URL('./fixtures/godot-4.7.2-empty.pck', import.meta.url), join(sourceRoot, 'sample.pck'));
   const { id: pckId } = await call('target_add', { kind: 'local', location: 'sample.pck' });
   const pck = await call('dissect', { id: pckId });
@@ -349,7 +389,7 @@ try {
     }
     return { status: measured.visual.status, routes: measured.visual.routeCount, scores: summary.routes.map(route => route.score) };
   })() : null;
-  console.log(JSON.stringify({ result: 'passed', version: probe.pluginVersion, visual, tools: 14, skill: skill.name, command: command.name, liveSettings: true, rea: probe.rea, linkedRea: siteRun.rea.binding.status, derived: { spec: spec.obligations, brief: brief.bytes > 0, tokens: tokens.total, exported: exported.count, mock: mocked.routes, check: checked.verdict, candidate: covered.candidate.verdict, scaffold: scaffolded.counts.copied, structure: closed.candidate.structure.comparedPages, report: closed.candidate.report ? 1 : 0, run: packed.steps.length }, pck: pck.pck.counts.entries, unity: unityDetails.rows[0].blocksInfo.compression, unityV9, il2cpp: il2cppRow.counts.types }));
+  console.log(JSON.stringify({ result: 'passed', version: probe.pluginVersion, visual, tools: 15, workbench: { status: wbOverview.status, stage: wbProject.project.stage, route: overviewBody.service }, skill: skill.name, command: command.name, liveSettings: true, rea: probe.rea, linkedRea: siteRun.rea.binding.status, derived: { spec: spec.obligations, brief: brief.bytes > 0, tokens: tokens.total, exported: exported.count, mock: mocked.routes, check: checked.verdict, candidate: covered.candidate.verdict, scaffold: scaffolded.counts.copied, structure: closed.candidate.structure.comparedPages, report: closed.candidate.report ? 1 : 0, run: packed.steps.length }, pck: pck.pck.counts.entries, unity: unityDetails.rows[0].blocksInfo.compression, unityV9, il2cpp: il2cppRow.counts.types }));
 } finally {
   await ctx?.fiber.dispose();
   await rm(root, { recursive: true, force: true });
