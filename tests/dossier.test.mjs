@@ -148,14 +148,14 @@ async function rebuildView(run, evidencePath, text) {
   };
 }
 
-test('注册十九个工具、技能和命令，读取当前 volatile 配置', async t => {
+test('注册二十个工具、技能和命令，读取当前 volatile 配置', async t => {
   const { config } = await setup(t);
   const live = Config({ reaPath: config.reaPath });
   const tools = new Map();
   let skill, command;
   apply({ effect: fn => fn(), tools: { register: tool => tools.set(tool.name, tool) }, skills: { register: value => { skill = value; } }, commands: { register: value => { command = value; } } }, live);
-  assert.equal(tools.size, 19);
-  for (const name of ['probe', 'target_add', 'dissect', 'dossier', 'spec', 'brief', 'tokens', 'export', 'mock', 'scaffold', 'build', 'check', 'list', 'status', 'run', 'workbench', 'questions', 'answer', 'report']) assert.ok(tools.has(`guoluo_${name}`), name);
+  assert.equal(tools.size, 20);
+  for (const name of ['probe', 'target_add', 'dissect', 'dossier', 'spec', 'brief', 'tokens', 'export', 'mock', 'scaffold', 'build', 'check', 'list', 'status', 'run', 'workbench', 'questions', 'answer', 'report', 'verdict']) assert.ok(tools.has(`guoluo_${name}`), name);
   assert.equal(skill.name, 'guoluo-rebuild');
   assert.match(skill.content, /^(?:\r?\n)?# 蜾蠃/u);
   const probe = tools.get('guoluo_probe');

@@ -28,6 +28,13 @@ window.__ModuleLoader__.load({
       throw new Error(`HTTP ${res.status}${why}`);
     };
     const jget = async (path) => asJson(await fetch(API + path, { credentials: 'same-origin' }));
+    /* 唯一的写入口。头和体都要显式声明，服务端按同源 + JSON 收；失败要把原因带回来。 */
+    const jpost = async (path, body) => asJson(await fetch(API + path, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    }));
 
     const CSS = `
 [data-gl-shell]{display:flex;flex-direction:column;gap:14px;padding:18px 20px 28px;max-width:1180px;color:var(--dsw-alias-label-primary);font-size:13px;line-height:1.55}
@@ -48,6 +55,7 @@ window.__ModuleLoader__.load({
 [data-gl-item-meta]{color:var(--dsw-alias-label-secondary);font-size:11px;display:flex;gap:6px}
 [data-gl-stage]{border:1px solid var(--dsw-alias-border-l2);border-radius:999px;padding:0 6px;font-size:10px;color:var(--dsw-alias-label-secondary)}
 [data-gl-stage="packed"]{color:var(--dsw-alias-state-success-primary);border-color:currentColor}
+[data-gl-stage="accepted"]{color:var(--dsw-alias-state-success-primary);border-color:currentColor;font-weight:600}
 [data-gl-stage="checked"]{color:var(--dsw-alias-state-success-primary);border-color:currentColor}
 [data-gl-stage="built"]{color:var(--dsw-alias-brand-primary);border-color:currentColor}
 [data-gl-stage="scaffolded"]{color:var(--dsw-alias-brand-primary);border-color:currentColor}
@@ -68,6 +76,13 @@ window.__ModuleLoader__.load({
 [data-gl-row] span:first-child{overflow-wrap:anywhere;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 [data-gl-row] span:last-child{color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums}
 [data-gl-note]{font-size:12px;color:var(--dsw-alias-label-secondary);border-left:2px solid var(--dsw-alias-border-l2);padding-left:9px}
+[data-gl-verdict]{display:flex;flex-direction:column;gap:8px;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;padding:10px 12px}
+[data-gl-verdict-head]{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+[data-gl-verdict-state]{font-weight:600;font-size:12px}
+[data-gl-verdict-state="accepted"]{color:var(--dsw-alias-state-success-primary)}
+[data-gl-verdict-state="rejected"]{color:var(--dsw-alias-state-warn-primary)}
+[data-gl-input]{width:100%;box-sizing:border-box;font:inherit;font-size:12px;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l2);border-radius:6px;padding:6px 8px;resize:vertical}
+[data-gl-input]:focus{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:-1px}
 [data-gl-warn]{color:var(--dsw-alias-state-warn-primary)}
 [data-gl-error]{color:var(--dsw-alias-state-error-primary);font-size:12px;overflow-wrap:anywhere}
 [data-gl-empty]{color:var(--dsw-alias-label-secondary);font-size:12px;padding:14px 0}
@@ -81,7 +96,7 @@ window.__ModuleLoader__.load({
     }
 
     // 阶段用中文显示：面板上不该让人去猜 packed / scaffolded 是什么意思。
-    const stageLabels = { registered: '已登记', dissected: '已盘点', specified: '有规格', scaffolded: '有素材底座', built: '有自己的工程', checked: '已核对', packed: '已出包' };
+    const stageLabels = { registered: '已登记', dissected: '已盘点', specified: '有规格', scaffolded: '有素材底座', built: '有自己的工程', checked: '已核对', packed: '已出包', accepted: '已验收' };
 
     function StageBadge({ stage }) {
       const id = stage ?? 'registered';
@@ -166,9 +181,63 @@ window.__ModuleLoader__.load({
         page?.note ? h('div', { 'data-gl-note': '' }, page.note) : null);
     }
 
+    // 拍板：面板上唯一会写档案的按钮。依据是最近一次带候选的核对，
+    // 服务端会拒绝没有核对、或核对属于别的批次的情况——这里不重复那套判断，
+    // 只把服务端给的原文显示出来，免得两处规则各说各话。
+    function VerdictBlock({ id, project, runId, onDone }) {
+      const [note, setNote] = useState('');
+      const [busy, setBusy] = useState(false);
+      const [error, setError] = useState('');
+      const verdict = project?.verdict ?? null;
+
+      const send = useCallback(async (decision) => {
+        setBusy(true); setError('');
+        try {
+          const result = await jpost('/verdict', { id, runId, decision, note: note.trim() });
+          setNote('');
+          onDone?.(result);
+        } catch (e) {
+          setError(String(e?.message ?? e));
+        } finally {
+          setBusy(false);
+        }
+      }, [id, runId, note, onDone]);
+
+      return h('div', { 'data-gl-verdict': '' },
+        h('div', { 'data-gl-verdict-head': '' },
+          h('span', { 'data-gl-h': '', style: { marginBottom: 0 } }, '验收'),
+          verdict?.decision
+            ? h('span', { 'data-gl-verdict-state': verdict.decision }, verdict.decision === 'accepted' ? '已接受' : '已退回')
+            : h('span', { 'data-gl-sub': '' }, '还没拍板'),
+          verdict?.checkVerdict ? h('span', { 'data-gl-sub': '' }, `核对结论 ${verdict.checkVerdict}`) : null,
+          verdict?.history > 1 ? h('span', { 'data-gl-sub': '' }, `历史 ${verdict.history} 条`) : null),
+        verdict?.unmet?.length
+          ? h('ul', { 'data-gl-note': '', 'data-gl-warn': '' }, verdict.unmet.map((line, index) => h('li', { key: index }, line)))
+          : null,
+        verdict?.note ? h('div', { 'data-gl-note': '' }, verdict.note) : null,
+        h('textarea', {
+          'data-gl-input': '', rows: 2, value: note, maxLength: 2000,
+          placeholder: '退回要写一句原因；接受可以留空。',
+          onChange: event => setNote(event.target.value),
+        }),
+        h('div', { 'data-gl-toolbar': '' },
+          h('button', {
+            type: 'button', 'data-gl-btn': '', disabled: busy || !runId,
+            onClick: () => send('accepted'),
+          }, '接受'),
+          h('button', {
+            type: 'button', 'data-gl-btn': '', disabled: busy || !runId || note.trim() === '',
+            onClick: () => send('rejected'),
+          }, '退回'),
+          h('span', { 'data-gl-spacer': '' }),
+          h('span', { 'data-gl-sub': '' }, '与 guoluo_verdict 同一条服务方法')),
+        error ? h('div', { 'data-gl-error': '' }, error) : null);
+    }
+
     function ProjectDetail({ id, onError }) {
       const [detail, setDetail] = useState(null);
       const [error, setError] = useState('');
+      const [tick, setTick] = useState(0);
 
       useEffect(() => {
         let live = true;
@@ -177,7 +246,7 @@ window.__ModuleLoader__.load({
           .then((data) => { if (live) setDetail(data); })
           .catch((e) => { if (live) { setError(String(e?.message ?? e)); onError?.(String(e?.message ?? e)); } });
         return () => { live = false; };
-      }, [id, onError]);
+      }, [id, onError, tick]);
 
       if (error) return h('div', { 'data-gl-error': '' }, error);
       if (!detail) return h('div', { 'data-gl-empty': '' }, '读档案…');
@@ -213,6 +282,7 @@ window.__ModuleLoader__.load({
               : null)
           : null,
         project.latest ? h(EvidenceBrowser, { project, runId: project.latest }) : null,
+        h(VerdictBlock, { id: project.id, project, runId: detail.latestRun?.runId ?? project.latest ?? null, onDone: () => setTick(value => value + 1) }),
         detail.next?.length
           ? h('div', null,
             h('div', { 'data-gl-h': '' }, '下一步'),

@@ -4,8 +4,8 @@
   "plugin": { "namespace": "zhuifengqug", "name": "guoluo", "coordinate": "zhuifengqug/dsh-guoluo", "packageName": "@zhuifengqug/dsh-guoluo" },
   "names": {
     "pluginNames": ["guoluo"], "loaderIds": ["guoluo"], "services": [],
-    "tools": ["guoluo_probe", "guoluo_target_add", "guoluo_dissect", "guoluo_dossier", "guoluo_scaffold", "guoluo_build", "guoluo_run", "guoluo_list", "guoluo_status", "guoluo_spec", "guoluo_brief", "guoluo_questions", "guoluo_answer", "guoluo_report", "guoluo_tokens", "guoluo_export", "guoluo_mock", "guoluo_check", "guoluo_workbench"],
+    "tools": ["guoluo_probe", "guoluo_target_add", "guoluo_dissect", "guoluo_dossier", "guoluo_scaffold", "guoluo_build", "guoluo_run", "guoluo_list", "guoluo_status", "guoluo_spec", "guoluo_brief", "guoluo_questions", "guoluo_answer", "guoluo_report", "guoluo_verdict", "guoluo_tokens", "guoluo_export", "guoluo_mock", "guoluo_check", "guoluo_workbench"],
     "commands": ["guoluo"], "skills": ["guoluo-rebuild"], "skillProviders": ["guoluo"],
-    "events": [], "settingsNamespaces": ["guoluo"], "routes": []
+    "events": [], "settingsNamespaces": ["guoluo"], "routes": ["/api/guoluo"]
   }
 }

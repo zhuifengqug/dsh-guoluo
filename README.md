@@ -101,10 +101,11 @@ DSH 0.2.2-rc.5 的本地应用资产档案插件。把静态素材整理成可�
 - **复刻工作台**：安装后重启 DSH，侧栏会出现「复刻工作台」入口；主区读取 `/api/guoluo` 的只读投影，列出档案、盘点批次、`spec`/`scaffold`/`check`/`pack` 等产物计数，并按 `asset`、`token`、`navigation`、`reference` 分页浏览证据。面板与 `guoluo_workbench` 工具共用同一套 Host 服务，不写档案、不执行素材脚本；没有 `webServer` 的 CLI/隔离宿主仍可加载其余工具。
 - **「复刻工坊」预设**：安装后重启 DSH，在模式下拉里会多一项「复刻工坊」。选它之后说一句「逆向复刻这个应用：<素材根内的路径>」，它就按 `probe → target_add → run` 跑完盘点与复刻包，再 `report` 写逆向报告、`questions` 把该你拍板的事一次列清；你答完用 `answer` 落盘。预设只改人设与工具集（不含 plan mode），`guoluo_*` 工具本身由本 bundle 在宿主平面注册，预设会话照常可见。
 - **集中提问与逆向报告**：`guoluo_questions` 只问证据决定不了的事——技术栈、缺口文件怎么处置、令牌冲突以哪份为准、素材是否原样沿用、原生部分是否进首版、工程叫什么名字。每条都带推断依据、建议答案与可选值，能由证据自己定的不进清单。答案落在档案根的 `questions.json`，同一批次重新生成会沿用，换批次不沿用。`guoluo_report` 把这些事实写成档案根的 `report.md`：八节，证据、推断与缺口分开写，并明写目标程序没有运行。
+- **人工验收拍板**：候选工程放回素材根并用 `guoluo_check` 传 `candidate.directory` 后，`guoluo_verdict` 或工作台的「接受 / 退回」按钮把当前批次的候选核对写成档案根 `verdict.json`。只认当前 `runId` 的带候选核对；无候选的内部检查会跳过，跨批次不会套用。`accepted` 可以带缺口，但每条会进 `unmet`；`rejected` 必须写原因，文件保留当前结论和最近 20 条历史。
 
 ## 当前不做
 
-不接入 craft-anything 执行后端或小说流程，也不生成业务代码：工作台只提供项目、证据和派生产物的只读视图，「复刻工坊」预设只编排已有的盘点/规格/提问/报告/生成工具；`guoluo_build` 生成的是一份静态 HTML 工程——结构取自证据页、素材逐字节沿用、令牌单独成表，**不含**脚手架、路由框架、状态管理、构建配置，也不重建脚本行为（脚本只留空标签占位）。Electron/框架工程的适配器要新增 `lib/build/` 下的适配器，不在这一版；Unity 只对节点做指纹登记，不保存节点内容、不读方法体、不反编译；IL2CPP 只登记类型名与字段名（未核对版本连这一步都不做）。结构维度只比页面清单、id/class 选择器、`a[href]` 原文目标与标签层级；不做 DOM 快照、不解析 CSS 选择器作用域、不算布局与样式、不展开模板与前端框架生成的节点，也不判断路由是否可达。扫描有数量、深度和大小预算，命中时在覆盖字段或局限中可见。只写档案根；**默认**不启动目标应用、目标脚本或浏览器，只有显式传 `visual` 才启动插件自己起的隔离 Chromium。REA 分析只接受目录，ASAR、APK、PCK、PE 与单文件需先解包成目录。
+不接入 craft-anything 执行后端或小说流程，也不生成业务代码：工作台提供项目、证据、派生产物与人工拍板的只读投影；「复刻工坊」预设只编排已有的盘点/规格/提问/报告/生成/核对工具，`guoluo_verdict` 只把用户明确的接受或退回写入 `verdict.json`；`guoluo_build` 生成的是一份静态 HTML 工程——结构取自证据页、素材逐字节沿用、令牌单独成表，**不含**脚手架、路由框架、状态管理、构建配置，也不重建脚本行为（脚本只留空标签占位）。Electron/框架工程的适配器要新增 `lib/build/` 下的适配器，不在这一版；Unity 只对节点做指纹登记，不保存节点内容、不读方法体、不反编译；IL2CPP 只登记类型名与字段名（未核对版本连这一步都不做）。结构维度只比页面清单、id/class 选择器、`a[href]` 原文目标与标签层级；不做 DOM 快照、不解析 CSS 选择器作用域、不算布局与样式、不展开模板与前端框架生成的节点，也不判断路由是否可达。扫描有数量、深度和大小预算，命中时在覆盖字段或局限中可见。只写档案根；**默认**不启动目标应用、目标脚本或浏览器，只有显式传 `visual` 才启动插件自己起的隔离 Chromium。REA 分析只接受目录，ASAR、APK、PCK、PE 与单文件需先解包成目录。
 
 ## 版本与能力边界
 
@@ -120,8 +121,9 @@ DSH 0.2.2-rc.5 的本地应用资产档案插件。把静态素材整理成可�
 | 1.1.0 | P1 工作台半端：第 15 个 `guoluo_workbench` 工具、`/api/guoluo` 同源只读路由、`client.js` 的主区/侧栏入口、档案列表与证据分页；真实 DSH webserver smoke 覆盖路由、client 清单与打包产物 |
 | 1.2.0 | P2 预设工作流：`preset-guoluo-rebuild`（「复刻工坊」，一句话开工）、`guoluo_questions`/`guoluo_answer`/`guoluo_report` 三个工具，落 `<id>/questions.json` 与 `<id>/report.md`；smoke 用真实 `agentPresets.list()` 断言预设挂进 roster 且无 `broken` |
 | 1.3.0 | P3 生成适配器：第 19 个 `guoluo_build` 工具与 `lib/build/` 注册表（首版 `static-html`），页面按证据结构重排、素材按原路径落位、令牌自成 `styles/project.css`、脚本不搬；落 `build/<批次>/` 并做结构自证；smoke 把生成工程复制回素材根用 `guoluo_check` 核出 `complete` |
+| 1.4.0 | P4 拍板：第 20 个 `guoluo_verdict` 工具、`POST /api/guoluo/verdict` 与工作台「接受 / 退回」按钮走同一条服务方法，结论落档案根 `verdict.json`（当前结论 + 最近 20 条历史）；只认本批次上带 `candidate.directory` 的核对，接受缺口候选会把缺口逐条记进 `unmet`；进度多一个 `accepted` |
 
-1.3.0 之后仍然不做的事写在「当前不做」里：不写素材根、不执行素材脚本、不重建脚本行为；框架工程（React/Vite 等）的适配器还没写；不接 craft-anything 执行后端与小说流程、不解析 Dart AOT/Flutter 快照、不做 DOM 快照与样式布局换算、不反编译、不自动发 npm 包。
+1.4.0 之后仍然不做的事写在「当前不做」里：不写素材根、不执行素材脚本、不重建脚本行为；框架工程（React/Vite 等）的适配器还没写；不接 craft-anything 执行后端与小说流程、不解析 Dart AOT/Flutter 快照、不做 DOM 快照与样式布局换算、不反编译、不自动发 npm 包。
 
 ## 工作台入口
 
@@ -144,7 +146,7 @@ guoluo_build(id="同一个档案 ID")
 guoluo_report(id="同一个档案 ID")
 ```
 
-工作台刷新后会显示 `registered`、`dissected`、`specified`、`scaffolded`、`built`、`checked`、`packed` 七种进度。`guoluo_workbench` 与面板读取同一份数据，`view=overview` 看项目列表，`view=project` 看档案和最近批次，`view=evidence` 分页读证据。旧会话不会热加载新 client bundle，也不会换成新注册的预设；重启后再开新会话验收。
+工作台刷新后会显示 `registered`、`dissected`、`specified`、`scaffolded`、`built`、`checked`、`packed`、`accepted` 八种进度。`guoluo_workbench` 与面板读取同一份数据，`view=overview` 看项目列表，`view=project` 看档案和最近批次，`view=evidence` 分页读证据；`accepted` 只表示人工接受当前静态核对结果，退回后回到 `checked`。旧会话不会热加载新 client bundle，也不会换成新注册的预设；重启后再开新会话验收。
 
 ## 开发
 

@@ -78,7 +78,7 @@ try {
   const desc = settings.describe().find(row => row.ns === 'guoluo');
   assert.equal(desc?.autoGenerate, true);
   const tools = ctx.get('tools');
-  assert.deepEqual(tools.schemas().map(tool => tool.name).filter(name => name.startsWith('guoluo_')).sort(), ['guoluo_answer', 'guoluo_brief', 'guoluo_build', 'guoluo_check', 'guoluo_dissect', 'guoluo_dossier', 'guoluo_export', 'guoluo_list', 'guoluo_mock', 'guoluo_probe', 'guoluo_questions', 'guoluo_report', 'guoluo_run', 'guoluo_scaffold', 'guoluo_spec', 'guoluo_status', 'guoluo_target_add', 'guoluo_tokens', 'guoluo_workbench']);
+  assert.deepEqual(tools.schemas().map(tool => tool.name).filter(name => name.startsWith('guoluo_')).sort(), ['guoluo_answer', 'guoluo_brief', 'guoluo_build', 'guoluo_check', 'guoluo_dissect', 'guoluo_dossier', 'guoluo_export', 'guoluo_list', 'guoluo_mock', 'guoluo_probe', 'guoluo_questions', 'guoluo_report', 'guoluo_run', 'guoluo_scaffold', 'guoluo_spec', 'guoluo_status', 'guoluo_target_add', 'guoluo_tokens', 'guoluo_verdict', 'guoluo_workbench']);
   // 预设是 bundle patch 里的一行：它必须真的注册进 roster，且没有 broken 诊断。
   const presets = ctx.get('agentPresets');
   assert.ok(presets, '宿主没有 agentPresets 服务，预设这一行只会停在 pending');
@@ -240,6 +240,27 @@ try {
   assert.match(reportBody, /目标程序没有运行/u);
   const askedAgain = await call('questions', { id: siteId, runId: siteRun.runId });
   assert.equal(askedAgain.answered, 1, '同批次重新生成要沿用答案');
+  // 拍板：工具与界面按钮走同一条服务方法，落 verdict.json 并让 stage 变 accepted。
+  const verdict = await call('verdict', { id: siteId, decision: 'accepted', note: '' });
+  assert.equal(verdict.decision, 'accepted');
+  assert.equal(verdict.check.verdict, 'complete');
+  assert.equal(verdict.file, join(archiveRoot, siteId, 'verdict.json'));
+  const verdictFile = JSON.parse(await readFile(verdict.file, 'utf8'));
+  assert.equal(verdictFile.schemaVersion, 1);
+  assert.equal(verdictFile.checkId, verdict.check.checkId);
+  assert.equal((await call('workbench', { view: 'project', id: siteId })).project.stage, 'accepted');
+  const verdictRes = await fetch(`${origin}/api/guoluo/verdict`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ id: siteId, decision: 'rejected', note: '再改一版' }),
+  });
+  assert.equal(verdictRes.status, 200);
+  const verdictBody = await verdictRes.json();
+  assert.equal(verdictBody.decision, 'rejected');
+  assert.equal(verdictBody.history, 2);
+  const afterVerdict = await (await fetch(`${origin}/api/guoluo/project?id=${siteId}`)).json();
+  assert.equal(afterVerdict.project.verdict.decision, 'rejected');
+  assert.equal(afterVerdict.project.stage, 'checked');
   await copyFile(new URL('./fixtures/godot-4.7.2-empty.pck', import.meta.url), join(sourceRoot, 'sample.pck'));
   const { id: pckId } = await call('target_add', { kind: 'local', location: 'sample.pck' });
   const pck = await call('dissect', { id: pckId });
@@ -443,7 +464,7 @@ try {
     }
     return { status: measured.visual.status, routes: measured.visual.routeCount, scores: summary.routes.map(route => route.score) };
   })() : null;
-  console.log(JSON.stringify({ result: 'passed', version: probe.pluginVersion, visual, tools: 19, preset: presetRow.id, workbench: { status: wbOverview.status, stage: wbProject.project.stage, route: overviewBody.service }, skill: skill.name, command: command.name, liveSettings: true, rea: probe.rea, linkedRea: siteRun.rea.binding.status, derived: { spec: spec.obligations, brief: brief.bytes > 0, tokens: tokens.total, exported: exported.count, mock: mocked.routes, check: checked.verdict, candidate: covered.candidate.verdict, scaffold: scaffolded.counts.copied, structure: closed.candidate.structure.comparedPages, report: closed.candidate.report ? 1 : 0, run: packed.steps.length, build: built.counts.pages }, pck: pck.pck.counts.entries, unity: unityDetails.rows[0].blocksInfo.compression, unityV9, il2cpp: il2cppRow.counts.types }));
+  console.log(JSON.stringify({ result: 'passed', version: probe.pluginVersion, visual, tools: 20, preset: presetRow.id, workbench: { status: wbOverview.status, stage: wbProject.project.stage, route: overviewBody.service }, skill: skill.name, command: command.name, liveSettings: true, rea: probe.rea, linkedRea: siteRun.rea.binding.status, derived: { spec: spec.obligations, brief: brief.bytes > 0, tokens: tokens.total, exported: exported.count, mock: mocked.routes, check: checked.verdict, candidate: covered.candidate.verdict, scaffold: scaffolded.counts.copied, structure: closed.candidate.structure.comparedPages, report: closed.candidate.report ? 1 : 0, run: packed.steps.length, build: built.counts.pages, verdict: verdictBody.history }, pck: pck.pck.counts.entries, unity: unityDetails.rows[0].blocksInfo.compression, unityV9, il2cpp: il2cppRow.counts.types }));
 } finally {
   await ctx?.fiber.dispose();
   await rm(root, { recursive: true, force: true });

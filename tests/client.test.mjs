@@ -110,6 +110,17 @@ test('client 半端：未配置目录时把原因原样显示，不假装空列�
   assert.doesNotMatch(text, /还没有档案/u);
 });
 
+test('client 半端：验收按钮走 POST /verdict，阶段多一个「已验收」', () => {
+  // 拍板是唯一会写档案的界面动作：POST 的目标、方法、content-type 与阶段标签
+  // 都在这里盯着。行为本身由 workbench-route 的 POST 用例验。
+  assert.match(source, /jpost\('\/verdict'/u);
+  assert.match(source, /method: 'POST'/u);
+  assert.match(source, /'content-type': 'application\/json'/u);
+  assert.match(source, /accepted: '已验收'/u);
+  assert.match(source, /data-gl-verdict-state/u);
+  assert.match(source, /与 guoluo_verdict 同一条服务方法/u);
+});
+
 test('client 半端：侧栏入口是一枚 svg 图标，带可读名字', () => {
   const { api } = load();
   const target = slots();

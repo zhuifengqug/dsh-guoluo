@@ -51,9 +51,46 @@ function isSameOrigin(req) {
   try { return new URL(origin).host === req.headers?.host; } catch { return false; }
 }
 
+// 拍板是唯一一个会写档案的界面动作，所以请求体要小、要显式声明 JSON：
+// 这两条不是为了防御什么，是为了让「谁在什么情况下改了结论」留在日志里可读。
+const verdictBodyLimit = 8 * 1024;
+
+function readJsonBody(req, limit) {
+  return new Promise((resolve, reject) => {
+    const type = String(req.headers?.['content-type'] ?? '').split(';')[0].trim().toLowerCase();
+    if (type !== 'application/json') {
+      reject(Object.assign(new Error('请求体要是 application/json。'), { kind: 'invalid-input', status: 415 }));
+      return;
+    }
+    const chunks = [];
+    let size = 0;
+    const fail = status => {
+      const error = Object.assign(new Error(`请求体超过 ${limit} 字节。`), { kind: 'invalid-input', status });
+      req.destroy?.();
+      reject(error);
+    };
+    req.on('data', chunk => {
+      size += chunk.length;
+      if (size > limit) { fail(413); return; }
+      chunks.push(chunk);
+    });
+    req.on('error', error => reject(Object.assign(error, { kind: 'environment' })));
+    req.on('end', () => {
+      const text = Buffer.concat(chunks).toString('utf8').trim();
+      if (text === '') { resolve({}); return; }
+      try { resolve(JSON.parse(text)); }
+      catch { reject(Object.assign(new Error('请求体不是合法 JSON。'), { kind: 'invalid-input' })); }
+    });
+  });
+}
+
 async function handleWorkbenchRequest({ req, res, workbench, ctx }) {
-  if (req.method !== 'GET' && req.method !== 'HEAD') {
-    sendJson(res, 405, { ok: false, text: '工作台接口只读：只接受 GET。' }, { allow: 'GET, HEAD' });
+  const method = req.method === 'HEAD' ? 'GET' : req.method;
+  const url = new URL(req.url ?? '/', 'http://localhost');
+  const tail = url.pathname.replace(/^\/api\/guoluo/u, '').replace(/\/+$/u, '');
+  const verb = tail === '/verdict' ? 'POST' : 'GET';
+  if (method !== verb) {
+    sendJson(res, 405, { ok: false, text: `这个接口只接受 ${verb}。` }, { allow: verb === 'POST' ? 'POST' : 'GET, HEAD' });
     return;
   }
   if (!isSameOrigin(req)) { sendJson(res, 403, { ok: false, text: '不允许的来路。' }); return; }
@@ -62,15 +99,18 @@ async function handleWorkbenchRequest({ req, res, workbench, ctx }) {
     if (rejected) { sendJson(res, typeof rejected === 'number' ? rejected : 403, { ok: false, text: '不允许的来路。' }); return; }
   } catch { /* 没有 connection 服务就只靠同源判断 */ }
 
-  const url = new URL(req.url ?? '/', 'http://localhost');
-  const tail = url.pathname.replace(/^\/api\/guoluo/u, '').replace(/\/+$/u, '');
   try {
     if (!tail) {
       sendJson(res, 200, {
         ok: true, service: 'guoluo', version: pluginVersion,
-        endpoints: ['overview', 'project?id=', 'evidence?id=&runId=&kind=&offset=&limit='],
-        note: '只读投影：数据与 guoluo_* 工具同源，不写档案、不执行素材。',
+        endpoints: ['overview', 'project?id=', 'evidence?id=&runId=&kind=&offset=&limit=', 'verdict（POST：id, decision, note?）'],
+        note: '只读投影：列表与证据与 guoluo_* 工具同源；唯一的写入口是 POST /verdict，与 guoluo_verdict 同一条服务方法。',
       });
+      return;
+    }
+    if (tail === '/verdict') {
+      const body = await readJsonBody(req, verdictBodyLimit);
+      sendJson(res, 200, { ok: true, ...await workbench.verdict(body) });
       return;
     }
     if (tail === '/overview') {
@@ -91,9 +131,10 @@ async function handleWorkbenchRequest({ req, res, workbench, ctx }) {
       }));
       return;
     }
-    sendJson(res, 404, { ok: false, text: '没有这个接口。可用的有 overview、project、evidence。' });
+    sendJson(res, 404, { ok: false, text: '没有这个接口。可用的有 overview、project、evidence、verdict。' });
   } catch (error) {
-    sendJson(res, error?.kind === 'invalid-input' ? 400 : 500, { ok: false, text: String(error?.message ?? error).slice(0, 2000) });
+    const status = error?.kind === 'invalid-input' ? (error.status ?? 400) : 500;
+    sendJson(res, status, { ok: false, text: String(error?.message ?? error).slice(0, 2000) });
   }
 }
 
@@ -117,6 +158,11 @@ export function apply(ctx, config = {}) {
   add('questions', '把证据里必须由人拍板的事整理成一份问题清单，写到档案根的 questions.json：技术栈、缺口文件怎么处置、令牌冲突以哪份为准、素材是否原样沿用、原生部分是否纳入首版、工程叫什么名字。每条都带推断依据与建议答案；能由证据自己决定的事不会出现在里面。重新生成时同一批次沿用已有答案，换批次不沿用。', { id, runId: string(50) }, ['id'], projects.questions);
   add('answer', '回答 questions.json 里的一个问题，按 questionId 落盘；返回还剩哪些问题没答。答案只记录不改证据。', { id, questionId: string(48), answer: string(2000) }, ['id', 'questionId', 'answer'], projects.answer);
   add('report', '把一个档案已经掌握的事实写成逆向报告到档案根的 report.md：结论、目标与素材、技术栈判断（含依据）、证据规模与类型分布、结构与页面、边界与缺口、访谈答案与待确认项、复刻路线与当前阶段。报告不产生新证据，也不运行目标程序。', { id, runId: string(50) }, ['id'], projects.report);
+  add('verdict', '对最近一次候选核对拍板：accepted 或 rejected，写到档案根的 verdict.json（当前结论 + 最近 20 条历史）。依据只认这一批次上带 candidate.directory 的那次 guoluo_check——没有它就拒绝；最近一次核对属于别的批次也拒绝。接受一份没全对上的候选是允许的，但没对上的项会逐条记进 unmet，不会被算成通过。退回必须写一句原因。与工作台按钮调用同一条服务方法。', {
+    id, runId: string(50),
+    decision: enumeration('accepted', 'rejected'),
+    note: string(2000),
+  }, ['id', 'decision'], projects.verdict);
   add('tokens', '导出设计令牌：tokens.css、Tailwind v4 主题片段和机器可读清单。写到档案的 tokens/ 目录。', { id, runId: string(50) }, ['id'], projects.tokens);
   add('export', '导出资产清单到档案的 export/ 目录，可选 json、markdown、csv。', { id, runId: string(50), format: { type: 'string', enum: ['json', 'markdown', 'csv'] }, kind: enumeration('asset', 'token', 'navigation', 'reference') }, ['id'], projects.export);
   add('mock', '按本批证据生成零依赖 mock 服务：静态链接回占位页，素材按素材根回放。只生成，不代为启动。', { id, runId: string(50), port: { type: 'integer', minimum: 1024, maximum: 65535 } }, ['id'], projects.mock);
