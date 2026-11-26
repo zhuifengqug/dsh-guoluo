@@ -44,7 +44,12 @@ export function apply(ctx, config = {}) {
   add('tokens', '导出设计令牌：tokens.css、Tailwind v4 主题片段和机器可读清单。写到档案的 tokens/ 目录。', { id, runId: string(50) }, ['id'], projects.tokens);
   add('export', '导出资产清单到档案的 export/ 目录，可选 json、markdown、csv。', { id, runId: string(50), format: { type: 'string', enum: ['json', 'markdown', 'csv'] }, kind: enumeration('asset', 'token', 'navigation', 'reference') }, ['id'], projects.export);
   add('mock', '按本批证据生成零依赖 mock 服务：静态链接回占位页，素材按素材根回放。只生成，不代为启动。', { id, runId: string(50), port: { type: 'integer', minimum: 1024, maximum: 65535 } }, ['id'], projects.mock);
-  add('scaffold', '从固定 runId 的证据生成最小可运行静态工程到档案的 scaffold/ 目录：页面、样式与媒体按素材根内相对路径逐字节复制并核对指纹，另生成路由索引、令牌表与逐文件清单；只写档案根、只生成不启动、不执行素材脚本，并在生成后按规格做一次文件层覆盖核对。', { id, runId: string(50), name: string(80) }, ['id'], projects.scaffold, 120000);
+  add('scaffold', '从固定 runId 的证据生成最小可运行静态工程到档案的 scaffold/ 目录：页面、样式与媒体按素材根内相对路径逐字节复制并核对指纹，另生成路由索引、令牌表与逐文件清单；只写档案根、只生成不启动、不执行素材脚本，并在生成后按规格做一次文件层覆盖核对。文件数、单文件与总量三档预算可用 files/fileBytes/totalBytes 调高（默认 512 / 8 MiB / 64 MiB），被预算挡下的素材在 warnings 与 budget 里计数，不再静默截断。', {
+    id, runId: string(50), name: string(80),
+    files: { type: 'integer', minimum: 1, maximum: 4096 },
+    fileBytes: { type: 'integer', minimum: 1, maximum: 32 * 1024 * 1024 },
+    totalBytes: { type: 'integer', minimum: 1, maximum: 256 * 1024 * 1024 },
+  }, ['id'], projects.scaffold, 180000);
   add('check', '核对复刻义务与证据的自洽性；给出 candidate 时再按规格核对候选工程目录里的素材、页面与令牌；显式给出 visual 时，再用 REA 比较两份本地静态页面（可按 routes 指定多条入口，各按 390/768/1440 三档视口测量），并用插件自身的 PNG 解码复算差异像素交叉核对，结果按路由独立呈报。', {
     id, runId: string(50), visual: { type: 'object', properties: {
       candidateDirectory: string(500), baselineEntry: string(500), candidateEntry: string(500),

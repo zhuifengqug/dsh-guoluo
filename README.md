@@ -13,7 +13,7 @@ DSH 0.2.2-rc.5 的本地应用资产档案插件。把静态素材整理成可�
 5. `guoluo_spec`、`guoluo_tokens`、`guoluo_export` 把一批证据转成派生产物，默认取最新批次。
 6. `guoluo_brief` 传 `id` 与必填的 `runId`，把这一批证据写成复刻交接单：先做哪些 HTML 入口、参考哪些素材与令牌、哪些声明有待确认、按什么顺序验收。它只写档案里的 `brief/<runId>.md`，不启动子代理、不落地工程（要静态工程骨架用 `guoluo_scaffold`）。不能省略 `runId`——派生产物按批次固定，避免交接单悄悄换了依据。
 7. `guoluo_check` 核对证据自洽性。传 `candidate: { "directory": "my-rebuild" }` 按规格核对候选工程目录里的素材、页面与令牌是否对得上，并在同一回执里给出页面结构比对（选择器、链接目标、标签层级），同时把结构缺口写成同目录的 `check-<ts>-<uuid>.md` 核对报告。传 `visual: { "candidateDirectory": "my-rebuild" }` 可核对默认入口的渲染差异。多页核对通过 `visual.routes` 指定基准和候选的 HTML 文件，每页比较 390、768、1440 三档宽度，高度固定为 900。
-8. `guoluo_scaffold` 传 `id`，可选 `runId` 与目录名 `name`，在档案的 `scaffold/<name>/` 下生成最小可运行静态工程：已盘点的页面、样式、图片、字体与音视频按素材根内相对路径逐字节复制并核对档案指纹，另加 `_scaffold/index.html` 路由索引、`tokens.css`/`tokens.tailwind.css` 与 `_scaffold/scaffold.json` 逐文件清单；生成后立刻按同一批规格做一次文件层覆盖核对并回执 `coverage`。只写档案根、只生成不启动、不执行素材脚本；同名目录已存在时拒绝覆盖。
+8. `guoluo_scaffold` 传 `id`，可选 `runId`、目录名 `name` 与三档复制预算 `files`/`fileBytes`/`totalBytes`（默认 512 个文件 / 单文件 8 MiB / 合计 64 MiB，上限 4096 / 32 MiB / 256 MiB），在档案的 `scaffold/<name>/` 下生成最小可运行静态工程：已盘点的页面、样式、图片、字体与音视频按素材根内相对路径逐字节复制并核对档案指纹，另加 `_scaffold/index.html` 路由索引、`tokens.css`/`tokens.tailwind.css` 与 `_scaffold/scaffold.json` 逐文件清单；生成后立刻按同一批规格做一次文件层覆盖核对并回执 `coverage`。只写档案根、只生成不启动、不执行素材脚本；同名目录已存在时拒绝覆盖。
 9. `/guoluo list` 列档案，`/guoluo status <id>` 看状态；也可用 `guoluo_list`、`guoluo_status`。
 
 随包提供 `guoluo-rebuild` 技能。档案索引和独立批次保存在档案根的 `<id>/target.json` 与 `<id>/runs/<runId>.json`。请使用单独的归档目录；不要在盘点时改动、移动或替换素材目录与档案目录中的条目。
@@ -38,7 +38,7 @@ DSH 0.2.2-rc.5 的本地应用资产档案插件。把静态素材整理成可�
 
 `mock` 只生成文件、不代为启动；返回的 `start` 是可直接复制执行的命令。它不伪造未观测到的页面结构，占位页会写明证据位置。
 
-`scaffold` 不是工程生成器：它只把已盘点的静态素材按原相对路径搬成一份可直接打开或 `python -m http.server` 起来的目录，再加索引、令牌与清单。素材字节与档案指纹不一致（盘点后源文件变过）时逐项跳过并写进 `skipped`，不把未核对的字节当证据；素材里出现 `README.md` 或 `_scaffold/` 同名路径时直接拒绝，不写半截工程。归档成员、可执行文件与非静态条目不复刻，覆盖度会照实把它们记为缺口。它返回的 `coverage` 同时含文件层计数与 `structure` 结构维度（照 scaffold 产物形状把复制页与 `_scaffold/index.html` 一起比），只说明这两层对得上，不说明样式或行为等价。
+`scaffold` 不是工程生成器：它只把已盘点的静态素材按原相对路径搬成一份可直接打开或 `python -m http.server` 起来的目录，再加索引、令牌与清单。素材字节与档案指纹不一致（盘点后源文件变过）时逐项跳过并写进 `skipped`，不把未核对的字节当证据；素材里出现 `README.md` 或 `_scaffold/` 同名路径时直接拒绝，不写半截工程。归档成员、可执行文件与非静态条目不复刻，覆盖度会照实把它们记为缺口。复制预算按素材条数、单文件字节与合计字节三档计算，被挡下的素材逐条进 `skipped` 并在 `warnings` 里给出计数、在回执 `budget`（`hit`/`blocked`/三档上限）里可查，不再静默截断；要全搬就调高对应上限再生成。证据里没有 HTML 页面时，`web.applicable` 为 `false`，`warnings` 明写结构、令牌与导航是空集而不是核对通过。它返回的 `coverage` 同时含文件层计数与 `structure` 结构维度（照 scaffold 产物形状把复制页与 `_scaffold/index.html` 一起比），只说明这两层对得上，不说明样式或行为等价。
 
 `check` 是 fail-closed 的：`verdict` 为 `complete` 只表示本批证据与义务互相对齐，**不表示目标已被复刻**。有漏项、悬空证据或规格与最新批次不一致时给 `blocked`，同名令牌多值给 `needs-decision`。
 
@@ -69,7 +69,7 @@ DSH 0.2.2-rc.5 的本地应用资产档案插件。把静态素材整理成可�
 
 ## 当前能看什么
 
-- **本地目录或单个 HTML/CSS**：常见媒体和字体文件目录、HTML/CSS SHA-256、CSS 自定义属性、静态 HTML 链接和部分资产引用。引用值丢弃查询参数、片段和带登录信息的 URL；不将链接当作服务器路由。
+- **本地目录或单个 HTML/CSS**：常见媒体和字体文件目录、HTML/CSS SHA-256、CSS 自定义属性、静态 HTML 链接和部分资产引用。引用值丢弃查询参数、片段和带登录信息的 URL；不将链接当作服务器路由。扩展名不在识别表里的文件不会消失：它们以 `type: other` 登记路径、字节数与扩展名，并在单文件 32 MiB、合计 256 MiB 的指纹预算内算 SHA-256，`coverage.untyped` 给出条数、`notes` 写明这批文件只是文件级证据。
 - **ASAR**：只看包头里的目录和登记大小，不验证归档成员或解包内容。要读 HTML/CSS 的证据，请单独登记已经导出的目录。
 - **APK**：只按 ZIP 中央目录和二进制 `AndroidManifest.xml` 做静态解析——包名、`versionCode`/`versionName`、min/target SDK、权限、activity 与启动入口、原生 ABI，以及 `res/`、`assets/` 里可识别的图片/字体/音视频条目与 dex/so/签名的计数。`manifestStatus` 标明清单是 `parsed`、`absent`、`unreadable` 还是 `parse-failed`。不解压资源内容、不校验签名、不运行应用；APK 内的素材条目只登记、不回放。清单里权限与活动各保留前 512 条、单类清单文本保留 256 KiB，超出部分标记截断并提示需要重新盘点。
 - **EXE/DLL**：解析 DOS/COFF/可选头、节表、导入 DLL 与函数名（或序号）、导出名与序号、CLR 目录标记，进入规格的「原生二进制」表。规格保留命名导出总数，并在前 128 个命名导出引用的槽位中统计 `aliasSlots`：至少两个不同槽位记录同一非零 RVA 时计为一组。未观测时记为 `null`，实测没有符合条件的组时记为 `0`。不反编译、不解析资源与证书、不运行二进制；二进制条目只登记、不回放。
