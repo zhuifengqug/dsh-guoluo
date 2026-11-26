@@ -49,6 +49,7 @@ window.__ModuleLoader__.load({
 [data-gl-stage]{border:1px solid var(--dsw-alias-border-l2);border-radius:999px;padding:0 6px;font-size:10px;color:var(--dsw-alias-label-secondary)}
 [data-gl-stage="packed"]{color:var(--dsw-alias-state-success-primary);border-color:currentColor}
 [data-gl-stage="checked"]{color:var(--dsw-alias-state-success-primary);border-color:currentColor}
+[data-gl-stage="built"]{color:var(--dsw-alias-brand-primary);border-color:currentColor}
 [data-gl-stage="scaffolded"]{color:var(--dsw-alias-brand-primary);border-color:currentColor}
 [data-gl-stage="specified"]{color:var(--dsw-alias-state-warn-primary);border-color:currentColor}
 [data-gl-stage="registered"]{color:var(--dsw-alias-state-idle-primary);border-color:currentColor}
@@ -79,8 +80,12 @@ window.__ModuleLoader__.load({
       return h('style', null, CSS);
     }
 
+    // 阶段用中文显示：面板上不该让人去猜 packed / scaffolded 是什么意思。
+    const stageLabels = { registered: '已登记', dissected: '已盘点', specified: '有规格', scaffolded: '有素材底座', built: '有自己的工程', checked: '已核对', packed: '已出包' };
+
     function StageBadge({ stage }) {
-      return h('span', { 'data-gl-stage': stage ?? 'registered' }, stage ?? 'registered');
+      const id = stage ?? 'registered';
+      return h('span', { 'data-gl-stage': id, title: id }, stageLabels[id] ?? id);
     }
 
     function Row({ label, value }) {

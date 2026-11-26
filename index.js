@@ -126,6 +126,13 @@ export function apply(ctx, config = {}) {
     fileBytes: { type: 'integer', minimum: 1, maximum: 32 * 1024 * 1024 },
     totalBytes: { type: 'integer', minimum: 1, maximum: 256 * 1024 * 1024 },
   }, ['id'], projects.scaffold, 180000);
+  add('build', '把已盘点的证据与访谈答案生成一份我自己的工程，落到档案的 build/<批次>/（每趟一个不可变目录，重跑不覆盖旧工程）：static-html 适配器按证据页的结构重排页面（保留标签、id/class、链接目标、嵌套层级与正文文本），素材按原相对路径落位并复核指纹，令牌生成为项目自己的 styles/project.css，脚本与内联样式不搬。生成后用同一套静态结构比对做一次自证，自证不是验收——要独立口径就把该目录复制回素材根，用 guoluo_check 带 candidate.directory 核一遍。', {
+    id, runId: string(50), name: string(80),
+    adapter: enumeration('static-html'),
+    files: { type: 'integer', minimum: 1, maximum: 4096 },
+    fileBytes: { type: 'integer', minimum: 1, maximum: 32 * 1024 * 1024 },
+    totalBytes: { type: 'integer', minimum: 1, maximum: 256 * 1024 * 1024 },
+  }, ['id'], projects.build, 180000);
   add('check', '核对复刻义务与证据的自洽性；给出 candidate 时再按规格核对候选工程目录里的素材、页面与令牌；显式给出 visual 时，再用 REA 比较两份本地静态页面（可按 routes 指定多条入口，各按 390/768/1440 三档视口测量），并用插件自身的 PNG 解码复算差异像素交叉核对，结果按路由独立呈报。', {
     id, runId: string(50), visual: { type: 'object', properties: {
       candidateDirectory: string(500), baselineEntry: string(500), candidateEntry: string(500),
@@ -177,7 +184,7 @@ export function apply(ctx, config = {}) {
   const body = skill.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/u, '');
   ctx.effect(() => ctx.skills.register({ name: 'guoluo-rebuild', description: summary, content: body, source: 'runtime', provider: name }));
   ctx.effect(() => ctx.commands.register({
-    name, description: '蜾蠃：一条命令跑完整链，或单步检查配置、列档案、导出交接单、生成 mock 与工程骨架、核对覆盖度', input: { hint: 'run <id> | probe | list | status <id> | spec <id> | brief <id> <runId> | tokens <id> | export <id> [json|markdown|csv] | mock <id> | scaffold <id> [runId|目录名] | check <id>' }, recordInput: false,
+    name, description: '蜾蠃：一条命令跑完整链，或单步检查配置、列档案、导出交接单、生成 mock 与工程骨架、生成自己的工程、核对覆盖度', input: { hint: 'run <id> | probe | list | status <id> | spec <id> | brief <id> <runId> | tokens <id> | export <id> [json|markdown|csv] | mock <id> | scaffold <id> [runId|目录名] | build <id> [工程名] | check <id>' }, recordInput: false,
     async handler({ rawInput, signal }) {
       const [verb, target, format, ...rest] = (rawInput ?? '').trim().split(/\s+/u);
       try {
@@ -192,8 +199,9 @@ export function apply(ctx, config = {}) {
         else if (verb === 'export' && target && !rest.length) result = await projects.export({ id: target, ...(format ? { format } : {}) }, signal);
         else if (verb === 'mock' && target && !rest.length) result = await projects.mock({ id: target, ...(format ? { port: Number(format) } : {}) }, signal);
         else if (verb === 'scaffold' && target && !rest.length) result = await projects.scaffold({ id: target, ...(format ? { name: format } : {}) }, signal);
+        else if (verb === 'build' && target && !rest.length) result = await projects.build({ id: target, ...(format ? { name: format } : {}) }, signal);
         else if (verb === 'check' && target && !format && !rest.length) result = await projects.check({ id: target }, signal);
-        else return { kind: verb ? 'error' : 'success', text: '蜾蠃 · /guoluo run <id> | probe | list | status <id> | spec <id> | brief <id> <runId> | tokens <id> | export <id> [json|markdown|csv] | mock <id> [port] | scaffold <id> [runId|目录名] | check <id>。登记和盘点请用 guoluo_target_add、guoluo_dissect。' };
+        else return { kind: verb ? 'error' : 'success', text: '蜾蠃 · /guoluo run <id> | probe | list | status <id> | spec <id> | brief <id> <runId> | tokens <id> | export <id> [json|markdown|csv] | mock <id> [port] | scaffold <id> [runId|目录名] | build <id> [工程名] | check <id>。登记和盘点请用 guoluo_target_add、guoluo_dissect。' };
         return { kind: 'success', text: JSON.stringify(result, null, 2) };
       } catch (error) {
         signal?.throwIfAborted();

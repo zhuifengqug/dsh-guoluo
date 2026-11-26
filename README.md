@@ -8,7 +8,7 @@ DSH 0.2.2-rc.5 的本地应用资产档案插件。把静态素材整理成可�
 
 先 `/guoluo probe` 检查配置与 REA CLI，然后可一条命令跑完整链，或按下面分步流程执行。
 
-想一条命令拿成品：登记之后调用 `guoluo_run`（`/guoluo run <id>`）。它按顺序跑盘点 → 规格 → 交接单 → 令牌 → 导出 → 静态骨架 → 核对，最后在档案的 `pack/<批次>/` 下写两份东西——`INDEX.md` 与 `pack.json`。每趟生成一个独立的批次目录，重跑不覆盖旧包，路径由回执的 `directory` 给出。`INDEX.md` 是给人读的入口：先说这批素材能不能开工，再按「先看什么」排好阅读顺序（规格 → 骨架说明 → 路由索引 → 交接单 → 结构缺口报告），然后是证据事实表、缺口与待确认、五步复刻路径与产物清单；`pack.json` 是同一份内容的机器读版本（每步状态、耗时、数量、产物路径）。已有批次传 `runId` 就直接沿用、不重新盘点；想同一趟把候选工程也核进去，附 `candidate: { "directory": "my-rebuild" }`。任何一步失败都会停下并报「第几步、哪一步、为什么」，暂存目录当场删掉，不会留下半截索引。单文件素材与 URL 登记不会生成骨架，`scaffold` 步骤记 `skipped` 并写明原因。下面 1–8 是同一串动作的分步执行方式。
+想一条命令拿成品：登记之后调用 `guoluo_run`（`/guoluo run <id>`）。它按顺序跑盘点 → 规格 → 交接单 → 令牌 → 导出 → 静态骨架 → 核对，最后在档案的 `pack/<批次>/` 下写两份东西——`INDEX.md` 与 `pack.json`。每趟生成一个独立的批次目录，重跑不覆盖旧包，路径由回执的 `directory` 给出。`INDEX.md` 是给人读的入口：先说这批素材能不能开工，再按「先看什么」排好阅读顺序（规格 → 骨架说明 → 路由索引 → 交接单 → 结构缺口报告），然后是证据事实表、缺口与待确认、五步复刻路径与产物清单；`pack.json` 是同一份内容的机器读版本（每步状态、耗时、数量、产物路径）。已有批次传 `runId` 就直接沿用、不重新盘点；想同一趟把候选工程也核进去，附 `candidate: { "directory": "my-rebuild" }`。任何一步失败都会停下并报「第几步、哪一步、为什么」，暂存目录当场删掉，不会留下半截索引。单文件素材与 URL 登记不会生成骨架，`scaffold` 步骤记 `skipped` 并写明原因。下面 1–9 是同一串动作的分步执行方式。
 
 1. `guoluo_target_add` 登记 `{ "kind": "local", "location": "my-export" }`。位置相对于素材根；目录、单个 HTML/CSS、Electron `.asar`、Android `.apk`、Godot `.pck`、Windows `.exe`/`.dll`，以及 Unity 的 `global-metadata.dat` 或 `.bundle`/`.unity3d` 都可以。
 2. `guoluo_dissect` 传档案 `id`，返回批次 `runId`、证据数量、覆盖说明、耗时与 REA 绑定结果。目录型素材会自动调用 REA 分析并把摘要绑定到本次素材的路径与根哈希；传 `"rea": false` 可跳过，`reaTimeoutMs` 可覆盖超时。APK、PCK、PE 与 Unity 素材只做静态解析，不触发 REA。
@@ -17,7 +17,8 @@ DSH 0.2.2-rc.5 的本地应用资产档案插件。把静态素材整理成可�
 5. `guoluo_brief` 传 `id` 与必填的 `runId`，把这一批证据写成复刻交接单：先做哪些 HTML 入口、参考哪些素材与令牌、哪些声明有待确认、按什么顺序验收。它只写档案里的 `brief/<runId>.md`，不启动子代理、不落地工程（要静态工程骨架用 `guoluo_scaffold`）。不能省略 `runId`——派生产物按批次固定，避免交接单悄悄换了依据。
 6. `guoluo_check` 核对证据自洽性。传 `candidate: { "directory": "my-rebuild" }` 按规格核对候选工程目录里的素材、页面与令牌是否对得上，并在同一回执里给出页面结构比对（选择器、链接目标、标签层级），同时把结构缺口写成同目录的 `check-<ts>-<uuid>.md` 核对报告。传 `visual: { "candidateDirectory": "my-rebuild" }` 可核对默认入口的渲染差异。多页核对通过 `visual.routes` 指定基准和候选的 HTML 文件，每页比较 390、768、1440 三档宽度，高度固定为 900。
 7. `guoluo_scaffold` 传 `id`，可选 `runId`、目录名 `name` 与三档复制预算 `files`/`fileBytes`/`totalBytes`（默认 512 个文件 / 单文件 8 MiB / 合计 64 MiB，上限 4096 / 32 MiB / 256 MiB），在档案的 `scaffold/<name>/` 下生成最小可运行静态工程：已盘点的页面、样式、图片、字体与音视频按素材根内相对路径逐字节复制并核对档案指纹，另加 `_scaffold/index.html` 路由索引、`tokens.css`/`tokens.tailwind.css` 与 `_scaffold/scaffold.json` 逐文件清单；生成后立刻按同一批规格做一次文件层覆盖核对并回执 `coverage`。只写档案根、只生成不启动、不执行素材脚本；同名目录已存在时拒绝覆盖。
-8. `/guoluo list` 列档案，`/guoluo status <id>` 看状态；也可用 `guoluo_list`、`guoluo_status`。
+8. `guoluo_build` 传 `id`，可选 `name`、`adapter`（当前只有 `static-html`）与同一套三档预算，在档案的 `build/<批次>/` 下生成**我自己的工程**：页面按证据页的结构重排（保留标签、`id`/`class`、`a[href]` 目标、嵌套层级与正文文本），素材按原相对路径逐字节落位并复核指纹，令牌生成成项目自己的 `styles/project.css`，脚本与内联样式一律不搬（只留空的 `<script>`/`<style>` 占位并计数）。生成后用同一套静态结构比对做一次自证写进 `project.json` 的 `selfCheck`；自证不是验收，要独立口径就把该目录复制回素材根，用 `guoluo_check` 带 `candidate.directory` 核一遍。每趟一个不可变批次目录，重跑不覆盖旧工程。
+9. `/guoluo list` 列档案，`/guoluo status <id>` 看状态；也可用 `guoluo_list`、`guoluo_status`。
 
 随包提供 `guoluo-rebuild` 技能。档案索引和独立批次保存在档案根的 `<id>/target.json` 与 `<id>/runs/<runId>.json`。请使用单独的归档目录；不要在盘点时改动、移动或替换素材目录与档案目录中的条目。
 
@@ -27,7 +28,8 @@ DSH 0.2.2-rc.5 的本地应用资产档案插件。把静态素材整理成可�
 2. **登记，然后一条命令。** `guoluo_target_add { "kind": "local", "location": "导出目录" }` 拿 `id`，再 `guoluo_run { "id": "<id>" }`。素材超过默认复制预算时补 `files` / `fileBytes` / `totalBytes`；想同一趟把已有候选工程也核进去，附 `candidate`。回执里的 `directory` 就是这一趟的复刻包。
 3. **先读 `pack/<批次>/INDEX.md`。** 它先回答「这批素材能不能开工」：证据数量、缺口与环境依赖，然后给出阅读顺序（规格 → 骨架说明 → 路由索引 → 交接单 → 结构缺口报告），最后是五步路径与产物清单。要下判断只看这一页。
 4. **按 `spec.md` 逐条复刻。** 每条义务都带 `path:line`，能回查到文件与行号；`unknowns` 里的东西不要凭感觉补。`scaffold/<name>/` 是素材底座（页面、样式、图片按原相对路径逐字节复制），可以就地搭结构，也可以整份拷出去当参照。
-5. **回核。** 把复刻工程放回 `sourceRoot` 内，`guoluo_check { "id": "<id>", "candidate": { "directory": "复刻工程" } }`：`coverage` 给文件层计数，`structure` 给页面结构比对，同目录的 `check-<ts>-<uuid>.md` 按证据页列出缺的选择器、链接目标与标签层级。要核渲染再传 `visual`——它只量三档静态视口，交互与功能得各自验收。
+5. **先拿一份自己的工程，再改它。** `guoluo_build { "id": "<id>" }` 把证据结构重排成 `build/<批次>/` 下的静态工程：页面、素材、令牌都在位，脚本留空占位。自证数字在 `project.json` 的 `selfCheck` 与 `README.md` 里；读完就知道哪些是搬来的、哪些得自己写（脚本、交互、框架）。
+6. **回核。** 把复刻工程放回 `sourceRoot` 内，`guoluo_check { "id": "<id>", "candidate": { "directory": "复刻工程" } }`：`coverage` 给文件层计数，`structure` 给页面结构比对，同目录的 `check-<ts>-<uuid>.md` 按证据页列出缺的选择器、链接目标与标签层级。要核渲染再传 `visual`——它只量三档静态视口，交互与功能得各自验收。
 
 `complete` 在三层都对齐时出现，含义是「这批证据与这份候选在文件层、令牌声明、页面结构上对得上」，不是「目标已被复刻」，更不是「行为等价」。
 
@@ -44,6 +46,7 @@ DSH 0.2.2-rc.5 的本地应用资产档案插件。把静态素材整理成可�
 | `guoluo_mock` | `<id>/mock/mock.json`、`server.mjs` | 零依赖回放服务：静态链接回占位页，素材按素材根发原始字节，其余 404 |
 | `guoluo_scaffold` | `<id>/scaffold/<name>/` 下的素材副本、`_scaffold/{index.html,tokens.css,tokens.tailwind.css,scaffold.json}`、`README.md` | 最小可运行静态工程：素材逐字节复制并核指纹，另生成路由索引、令牌表与逐文件清单；生成后即做文件层覆盖核对 |
 | `guoluo_check` | `<id>/checks/check-<ts>-<uuid>.json` | 覆盖度核对：漏项、悬空证据、与已落盘规格的批次偏差；可选候选工程覆盖度（文件层 + 页面结构层）与视觉比对 |
+| `guoluo_build` | `<id>/build/<批次>/` 下的 `index.html` 等重排页面、按原路径落位的素材、`styles/project.css`、`project.json`、`README.md` | 有自己的工程：结构取自证据页、素材逐字节沿用、令牌自成一份、脚本不搬；生成即做结构自证，独立口径走 `guoluo_check`；每趟一个不可变批次目录 |
 | `guoluo_run` | `<id>/pack/<批次>/INDEX.md`、`pack.json` | 一条命令串完整链后的入口：人读索引（结论、阅读顺序、证据事实、缺口、五步复刻路径、产物清单）与机器读汇总（每步状态与产物路径）；每趟一个独立批次目录，重跑不覆盖旧包 |
 | `guoluo_check`（结构报告） | `<id>/checks/check-<ts>-<uuid>.md` | 候选结构缺口报告：按证据页分组列出缺的选择器、链接目标、标签数量与深度分布，并单列未核页、缺页与候选多出的页 |
 | `guoluo_check`（视觉） | `<id>/checks/check-<ts>-<uuid>/` 下的 `summary.json`、`r<n>-<w>-{before,after}.{artifact.json,png}`、`r<n>-<w>-diff.json` | 逐路由、逐视口的核对结果与截图证据 |
@@ -54,7 +57,7 @@ DSH 0.2.2-rc.5 的本地应用资产档案插件。把静态素材整理成可�
 
 `mock` 只生成文件、不代为启动；返回的 `start` 是可直接复制执行的命令。它不伪造未观测到的页面结构，占位页会写明证据位置。
 
-`scaffold` 不是工程生成器：它只把已盘点的静态素材按原相对路径搬成一份可直接打开或 `python -m http.server` 起来的目录，再加索引、令牌与清单。素材字节与档案指纹不一致（盘点后源文件变过）时逐项跳过并写进 `skipped`，不把未核对的字节当证据；素材里出现 `README.md` 或 `_scaffold/` 同名路径时直接拒绝，不写半截工程。归档成员、可执行文件与非静态条目不复刻，覆盖度会照实把它们记为缺口。复制预算按素材条数、单文件字节与合计字节三档计算，被挡下的素材逐条进 `skipped` 并在 `warnings` 里给出计数、在回执 `budget`（`hit`/`blocked`/三档上限）里可查，不再静默截断；要全搬就调高对应上限再生成。证据里没有 HTML 页面时，`web.applicable` 为 `false`，`warnings` 明写结构、令牌与导航是空集而不是核对通过。它返回的 `coverage` 同时含文件层计数与 `structure` 结构维度（照 scaffold 产物形状把复制页与 `_scaffold/index.html` 一起比），只说明这两层对得上，不说明样式或行为等价。
+`scaffold` 不是工程生成器：它只把已盘点的静态素材按原相对路径搬成一份可直接打开或 `python -m http.server` 起来的目录，再加索引、令牌与清单（要「有自己的工程」用 `guoluo_build`）。素材字节与档案指纹不一致（盘点后源文件变过）时逐项跳过并写进 `skipped`，不把未核对的字节当证据；素材里出现 `README.md` 或 `_scaffold/` 同名路径时直接拒绝，不写半截工程。归档成员、可执行文件与非静态条目不复刻，覆盖度会照实把它们记为缺口。复制预算按素材条数、单文件字节与合计字节三档计算，被挡下的素材逐条进 `skipped` 并在 `warnings` 里给出计数、在回执 `budget`（`hit`/`blocked`/三档上限）里可查，不再静默截断；要全搬就调高对应上限再生成。证据里没有 HTML 页面时，`web.applicable` 为 `false`，`warnings` 明写结构、令牌与导航是空集而不是核对通过。它返回的 `coverage` 同时含文件层计数与 `structure` 结构维度（照 scaffold 产物形状把复制页与 `_scaffold/index.html` 一起比），只说明这两层对得上，不说明样式或行为等价。
 
 `check` 是 fail-closed 的：`verdict` 为 `complete` 只表示本批证据与义务互相对齐，**不表示目标已被复刻**。有漏项、悬空证据或规格与最新批次不一致时给 `blocked`，同名令牌多值给 `needs-decision`。
 
@@ -101,7 +104,7 @@ DSH 0.2.2-rc.5 的本地应用资产档案插件。把静态素材整理成可�
 
 ## 当前不做
 
-不接入 craft-anything 执行后端或小说流程，也不生成业务代码：工作台到 P2 为止只提供项目、证据和派生产物的只读视图，「复刻工坊」预设也只编排已有的盘点/规格/提问/报告工具；`scaffold` 只产出逐字节复制的静态素材目录加索引、令牌与清单，不含脚手架、路由框架、状态管理与构建配置。Web/Electron 的候选工程生成适配器留在后续 P3，不把只读工作台冒充成成品生成器；Unity 只对节点做指纹登记，不保存节点内容、不读方法体、不反编译；IL2CPP 只登记类型名与字段名（未核对版本连这一步都不做）。结构维度只比页面清单、id/class 选择器、`a[href]` 原文目标与标签层级；不做 DOM 快照、不解析 CSS 选择器作用域、不算布局与样式、不展开模板与前端框架生成的节点，也不判断路由是否可达。扫描有数量、深度和大小预算，命中时在覆盖字段或局限中可见。只写档案根；**默认**不启动目标应用、目标脚本或浏览器，只有显式传 `visual` 才启动插件自己起的隔离 Chromium。REA 分析只接受目录，ASAR、APK、PCK、PE 与单文件需先解包成目录。
+不接入 craft-anything 执行后端或小说流程，也不生成业务代码：工作台只提供项目、证据和派生产物的只读视图，「复刻工坊」预设只编排已有的盘点/规格/提问/报告/生成工具；`guoluo_build` 生成的是一份静态 HTML 工程——结构取自证据页、素材逐字节沿用、令牌单独成表，**不含**脚手架、路由框架、状态管理、构建配置，也不重建脚本行为（脚本只留空标签占位）。Electron/框架工程的适配器要新增 `lib/build/` 下的适配器，不在这一版；Unity 只对节点做指纹登记，不保存节点内容、不读方法体、不反编译；IL2CPP 只登记类型名与字段名（未核对版本连这一步都不做）。结构维度只比页面清单、id/class 选择器、`a[href]` 原文目标与标签层级；不做 DOM 快照、不解析 CSS 选择器作用域、不算布局与样式、不展开模板与前端框架生成的节点，也不判断路由是否可达。扫描有数量、深度和大小预算，命中时在覆盖字段或局限中可见。只写档案根；**默认**不启动目标应用、目标脚本或浏览器，只有显式传 `visual` 才启动插件自己起的隔离 Chromium。REA 分析只接受目录，ASAR、APK、PCK、PE 与单文件需先解包成目录。
 
 ## 版本与能力边界
 
@@ -116,8 +119,9 @@ DSH 0.2.2-rc.5 的本地应用资产档案插件。把静态素材整理成可�
 | 1.0.0 | 交付面定型：14 个工具 + `guoluo-rebuild` 技能 + `/guoluo` 命令、一条命令出包、README 的五步复刻流程与本表；代码与 0.26.0 相同，只补文档、版本号与 tag |
 | 1.1.0 | P1 工作台半端：第 15 个 `guoluo_workbench` 工具、`/api/guoluo` 同源只读路由、`client.js` 的主区/侧栏入口、档案列表与证据分页；真实 DSH webserver smoke 覆盖路由、client 清单与打包产物 |
 | 1.2.0 | P2 预设工作流：`preset-guoluo-rebuild`（「复刻工坊」，一句话开工）、`guoluo_questions`/`guoluo_answer`/`guoluo_report` 三个工具，落 `<id>/questions.json` 与 `<id>/report.md`；smoke 用真实 `agentPresets.list()` 断言预设挂进 roster 且无 `broken` |
+| 1.3.0 | P3 生成适配器：第 19 个 `guoluo_build` 工具与 `lib/build/` 注册表（首版 `static-html`），页面按证据结构重排、素材按原路径落位、令牌自成 `styles/project.css`、脚本不搬；落 `build/<批次>/` 并做结构自证；smoke 把生成工程复制回素材根用 `guoluo_check` 核出 `complete` |
 
-1.2.0 之后仍然不做的事写在「当前不做」里：不写素材根、不执行素材脚本、不生成业务代码；生成工程适配器留 P3；不接 craft-anything 执行后端与小说流程、不解析 Dart AOT/Flutter 快照、不做 DOM 快照与样式布局换算、不反编译、不自动发 npm 包。
+1.3.0 之后仍然不做的事写在「当前不做」里：不写素材根、不执行素材脚本、不重建脚本行为；框架工程（React/Vite 等）的适配器还没写；不接 craft-anything 执行后端与小说流程、不解析 Dart AOT/Flutter 快照、不做 DOM 快照与样式布局换算、不反编译、不自动发 npm 包。
 
 ## 工作台入口
 
@@ -134,12 +138,13 @@ DSH 0.2.2-rc.5 的本地应用资产档案插件。把静态素材整理成可�
 ```text
 guoluo_target_add(kind="local", location="site")
 guoluo_run(id="刚返回的档案 ID")
-guoluo_report(id="同一个档案 ID")
 guoluo_questions(id="同一个档案 ID")
 guoluo_answer(id="同一个档案 ID", questionId="stack", answer="静态 HTML + CSS")
+guoluo_build(id="同一个档案 ID")
+guoluo_report(id="同一个档案 ID")
 ```
 
-工作台刷新后会显示 `registered`、`dissected`、`specified`、`scaffolded`、`checked`、`packed` 六种进度。`guoluo_workbench` 与面板读取同一份数据，`view=overview` 看项目列表，`view=project` 看档案和最近批次，`view=evidence` 分页读证据。旧会话不会热加载新 client bundle，也不会换成新注册的预设；重启后再开新会话验收。
+工作台刷新后会显示 `registered`、`dissected`、`specified`、`scaffolded`、`built`、`checked`、`packed` 七种进度。`guoluo_workbench` 与面板读取同一份数据，`view=overview` 看项目列表，`view=project` 看档案和最近批次，`view=evidence` 分页读证据。旧会话不会热加载新 client bundle，也不会换成新注册的预设；重启后再开新会话验收。
 
 ## 开发
 

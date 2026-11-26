@@ -78,7 +78,7 @@ try {
   const desc = settings.describe().find(row => row.ns === 'guoluo');
   assert.equal(desc?.autoGenerate, true);
   const tools = ctx.get('tools');
-  assert.deepEqual(tools.schemas().map(tool => tool.name).filter(name => name.startsWith('guoluo_')).sort(), ['guoluo_answer', 'guoluo_brief', 'guoluo_check', 'guoluo_dissect', 'guoluo_dossier', 'guoluo_export', 'guoluo_list', 'guoluo_mock', 'guoluo_probe', 'guoluo_questions', 'guoluo_report', 'guoluo_run', 'guoluo_scaffold', 'guoluo_spec', 'guoluo_status', 'guoluo_target_add', 'guoluo_tokens', 'guoluo_workbench']);
+  assert.deepEqual(tools.schemas().map(tool => tool.name).filter(name => name.startsWith('guoluo_')).sort(), ['guoluo_answer', 'guoluo_brief', 'guoluo_build', 'guoluo_check', 'guoluo_dissect', 'guoluo_dossier', 'guoluo_export', 'guoluo_list', 'guoluo_mock', 'guoluo_probe', 'guoluo_questions', 'guoluo_report', 'guoluo_run', 'guoluo_scaffold', 'guoluo_spec', 'guoluo_status', 'guoluo_target_add', 'guoluo_tokens', 'guoluo_workbench']);
   // 预设是 bundle patch 里的一行：它必须真的注册进 roster，且没有 broken 诊断。
   const presets = ctx.get('agentPresets');
   assert.ok(presets, '宿主没有 agentPresets 服务，预设这一行只会停在 pending');
@@ -169,6 +169,29 @@ try {
   assert.deepEqual(scaffoldManifest.files.map(file => file.origin).sort(), ['copied', 'copied', 'generated', 'generated', 'generated', 'generated']);
   assert.equal(scaffoldManifest.files.find(file => file.path === 'app.css').integrity, 'match');
   assert.equal(await readFile(join(archiveRoot, scaffolded.directory, 'app.css'), 'utf8'), ':root{--accent:#112233}');
+  // 生成自己的工程：结构重排 + 素材原样 + 令牌自成一份，脚本不搬；自证不 diverge。
+  const built = await call('build', { id: siteId, name: 'site-project' });
+  assert.match(built.directory, /^[0-9a-f-]{36}\/build\/\d{13}-[0-9a-f-]{36}$/u);
+  assert.equal(built.adapter, 'static-html');
+  assert.equal(built.counts.pages, 1);
+  assert.equal(built.counts.scriptsRemoved, 0);
+  assert.equal(built.structure.diverged, false);
+  const builtRoot = join(archiveRoot, built.directory);
+  const builtIndex = await readFile(join(builtRoot, 'index.html'), 'utf8');
+  assert.match(builtIndex, /href="\/docs"/u);
+  assert.match(builtIndex, /<img src="hero\.png">/u);
+  assert.match(builtIndex, /<link rel="stylesheet" href="\.\/styles\/project\.css">/u);
+  assert.equal(await readFile(join(builtRoot, 'app.css'), 'utf8'), ':root{--accent:#112233}');
+  assert.match(await readFile(join(builtRoot, 'styles', 'project.css'), 'utf8'), /--accent:/u);
+  const projectManifest = JSON.parse(await readFile(join(builtRoot, 'project.json'), 'utf8'));
+  assert.equal(projectManifest.kind, 'guoluo-build');
+  assert.equal(projectManifest.runId, siteRun.runId);
+  assert.equal(projectManifest.selfCheck.diverged, false);
+  // 自证之外要一个独立口径：把生成的工程复制回素材根，再用公开的 check 核一遍。
+  await cp(builtRoot, join(sourceRoot, 'site-build'), { recursive: true });
+  const audited = await call('check', { id: siteId, runId: siteRun.runId, candidate: { directory: 'site-build' } });
+  assert.equal(audited.candidate.verdict, 'complete');
+  assert.equal(audited.candidate.structure.diverged, false);
   // 一条命令跑完整链：沿用同一批证据，索引要落到 pack/ 且列出全部八步。
   const packed = await call('run', { id: siteId, runId: siteRun.runId, name: 'site-pack' });
   assert.match(packed.directory, /^[0-9a-f-]{36}\/pack\/\d{13}-[0-9a-f-]{36}$/u);
@@ -420,7 +443,7 @@ try {
     }
     return { status: measured.visual.status, routes: measured.visual.routeCount, scores: summary.routes.map(route => route.score) };
   })() : null;
-  console.log(JSON.stringify({ result: 'passed', version: probe.pluginVersion, visual, tools: 18, preset: presetRow.id, workbench: { status: wbOverview.status, stage: wbProject.project.stage, route: overviewBody.service }, skill: skill.name, command: command.name, liveSettings: true, rea: probe.rea, linkedRea: siteRun.rea.binding.status, derived: { spec: spec.obligations, brief: brief.bytes > 0, tokens: tokens.total, exported: exported.count, mock: mocked.routes, check: checked.verdict, candidate: covered.candidate.verdict, scaffold: scaffolded.counts.copied, structure: closed.candidate.structure.comparedPages, report: closed.candidate.report ? 1 : 0, run: packed.steps.length }, pck: pck.pck.counts.entries, unity: unityDetails.rows[0].blocksInfo.compression, unityV9, il2cpp: il2cppRow.counts.types }));
+  console.log(JSON.stringify({ result: 'passed', version: probe.pluginVersion, visual, tools: 19, preset: presetRow.id, workbench: { status: wbOverview.status, stage: wbProject.project.stage, route: overviewBody.service }, skill: skill.name, command: command.name, liveSettings: true, rea: probe.rea, linkedRea: siteRun.rea.binding.status, derived: { spec: spec.obligations, brief: brief.bytes > 0, tokens: tokens.total, exported: exported.count, mock: mocked.routes, check: checked.verdict, candidate: covered.candidate.verdict, scaffold: scaffolded.counts.copied, structure: closed.candidate.structure.comparedPages, report: closed.candidate.report ? 1 : 0, run: packed.steps.length, build: built.counts.pages }, pck: pck.pck.counts.entries, unity: unityDetails.rows[0].blocksInfo.compression, unityV9, il2cpp: il2cppRow.counts.types }));
 } finally {
   await ctx?.fiber.dispose();
   await rm(root, { recursive: true, force: true });
