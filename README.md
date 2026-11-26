@@ -96,10 +96,12 @@ DSH 0.2.2-rc.5 的本地应用资产档案插件。把静态素材整理成可�
 - **视觉核对**：显式传 `visual` 时，用 REA 的 `list-browser-targets`、`capture-web-screenshot`、`compare-web-screenshots` 比较基准与候选的三档静态视口，产物落盘可复查。需要本机 Chrome 或 Edge（或配置 `chromiumPath`）。
 - **候选工程覆盖度**：显式传 `candidate` 时，只读扫描候选目录（不跟随链接、不执行候选代码），核对规格声明的素材文件、页面入口与同名样式令牌是否存在，并对预算内的素材逐一算 SHA-256 按内容比对（同名换内容会进 `changed`）。归档成员不判缺失。同一回执的 `structure` 把候选页面与证据页做静态结构比对（页面清单、选择器、链接目标、标签层级）；它不是 DOM 快照比对，也不碰样式与脚本。文件层与结构层都对得上不等于复刻完成。
 - **复刻工作台**：安装后重启 DSH，侧栏会出现「复刻工作台」入口；主区读取 `/api/guoluo` 的只读投影，列出档案、盘点批次、`spec`/`scaffold`/`check`/`pack` 等产物计数，并按 `asset`、`token`、`navigation`、`reference` 分页浏览证据。面板与 `guoluo_workbench` 工具共用同一套 Host 服务，不写档案、不执行素材脚本；没有 `webServer` 的 CLI/隔离宿主仍可加载其余工具。
+- **「复刻工坊」预设**：安装后重启 DSH，在模式下拉里会多一项「复刻工坊」。选它之后说一句「逆向复刻这个应用：<素材根内的路径>」，它就按 `probe → target_add → run` 跑完盘点与复刻包，再 `report` 写逆向报告、`questions` 把该你拍板的事一次列清；你答完用 `answer` 落盘。预设只改人设与工具集（不含 plan mode），`guoluo_*` 工具本身由本 bundle 在宿主平面注册，预设会话照常可见。
+- **集中提问与逆向报告**：`guoluo_questions` 只问证据决定不了的事——技术栈、缺口文件怎么处置、令牌冲突以哪份为准、素材是否原样沿用、原生部分是否进首版、工程叫什么名字。每条都带推断依据、建议答案与可选值，能由证据自己定的不进清单。答案落在档案根的 `questions.json`，同一批次重新生成会沿用，换批次不沿用。`guoluo_report` 把这些事实写成档案根的 `report.md`：八节，证据、推断与缺口分开写，并明写目标程序没有运行。
 
 ## 当前不做
 
-不接入 craft-anything 执行后端或小说流程，也不生成业务代码：P1 的工作台先提供项目、证据和派生产物的只读视图；`scaffold` 只产出逐字节复制的静态素材目录加索引、令牌与清单，不含脚手架、路由框架、状态管理与构建配置。Web/Electron 的候选工程生成适配器留在后续 P3，不把只读工作台冒充成成品生成器；Unity 只对节点做指纹登记，不保存节点内容、不读方法体、不反编译；IL2CPP 只登记类型名与字段名（未核对版本连这一步都不做）。结构维度只比页面清单、id/class 选择器、`a[href]` 原文目标与标签层级；不做 DOM 快照、不解析 CSS 选择器作用域、不算布局与样式、不展开模板与前端框架生成的节点，也不判断路由是否可达。扫描有数量、深度和大小预算，命中时在覆盖字段或局限中可见。只写档案根；**默认**不启动目标应用、目标脚本或浏览器，只有显式传 `visual` 才启动插件自己起的隔离 Chromium。REA 分析只接受目录，ASAR、APK、PCK、PE 与单文件需先解包成目录。
+不接入 craft-anything 执行后端或小说流程，也不生成业务代码：工作台到 P2 为止只提供项目、证据和派生产物的只读视图，「复刻工坊」预设也只编排已有的盘点/规格/提问/报告工具；`scaffold` 只产出逐字节复制的静态素材目录加索引、令牌与清单，不含脚手架、路由框架、状态管理与构建配置。Web/Electron 的候选工程生成适配器留在后续 P3，不把只读工作台冒充成成品生成器；Unity 只对节点做指纹登记，不保存节点内容、不读方法体、不反编译；IL2CPP 只登记类型名与字段名（未核对版本连这一步都不做）。结构维度只比页面清单、id/class 选择器、`a[href]` 原文目标与标签层级；不做 DOM 快照、不解析 CSS 选择器作用域、不算布局与样式、不展开模板与前端框架生成的节点，也不判断路由是否可达。扫描有数量、深度和大小预算，命中时在覆盖字段或局限中可见。只写档案根；**默认**不启动目标应用、目标脚本或浏览器，只有显式传 `visual` 才启动插件自己起的隔离 Chromium。REA 分析只接受目录，ASAR、APK、PCK、PE 与单文件需先解包成目录。
 
 ## 版本与能力边界
 
@@ -113,21 +115,31 @@ DSH 0.2.2-rc.5 的本地应用资产档案插件。把静态素材整理成可�
 | 0.26.0 | `guoluo_run` 一条命令串完整链；复刻包落在 `pack/<批次>/`，每趟一个不可变目录，失败不留半截、旧包原样保留 |
 | 1.0.0 | 交付面定型：14 个工具 + `guoluo-rebuild` 技能 + `/guoluo` 命令、一条命令出包、README 的五步复刻流程与本表；代码与 0.26.0 相同，只补文档、版本号与 tag |
 | 1.1.0 | P1 工作台半端：第 15 个 `guoluo_workbench` 工具、`/api/guoluo` 同源只读路由、`client.js` 的主区/侧栏入口、档案列表与证据分页；真实 DSH webserver smoke 覆盖路由、client 清单与打包产物 |
+| 1.2.0 | P2 预设工作流：`preset-guoluo-rebuild`（「复刻工坊」，一句话开工）、`guoluo_questions`/`guoluo_answer`/`guoluo_report` 三个工具，落 `<id>/questions.json` 与 `<id>/report.md`；smoke 用真实 `agentPresets.list()` 断言预设挂进 roster 且无 `broken` |
 
-1.1.0 之后仍然不做的事写在「当前不做」里：P1 不写档案、不执行素材脚本、不生成业务代码；不接 craft-anything 执行后端与小说流程、不解析 Dart AOT/Flutter 快照、不做 DOM 快照与样式布局换算、不反编译、不自动发 npm 包。
+1.2.0 之后仍然不做的事写在「当前不做」里：不写素材根、不执行素材脚本、不生成业务代码；生成工程适配器留 P3；不接 craft-anything 执行后端与小说流程、不解析 Dart AOT/Flutter 快照、不做 DOM 快照与样式布局换算、不反编译、不自动发 npm 包。
 
 ## 工作台入口
 
 完成安装后重启 DSH，侧栏会出现「复刻工作台」；点开后先看档案列表，再点档案看最近批次、产物数量与分页证据。面板只读 `/api/guoluo`，所以命令行和面板不会各自维护一套状态。没有目录时先在蜾蠃设置里填 `sourceRoot`（素材根）、`archiveRoot`（档案根，必须与素材根互不包含）、`reaPath`、`chromiumPath` 和 `reaTimeoutMs`。
 
-P2 的 preset 完成后，目标句会是「逆向复刻这个应用：素材根内的 site 目录」。当前 P1 的可执行入口是：
+最快的路是换成「复刻工坊」预设，然后说一句：
+
+```text
+逆向复刻这个应用：site
+```
+
+不要预设、或者想手动控制每一步时，按这个顺序走：
 
 ```text
 guoluo_target_add(kind="local", location="site")
 guoluo_run(id="刚返回的档案 ID")
+guoluo_report(id="同一个档案 ID")
+guoluo_questions(id="同一个档案 ID")
+guoluo_answer(id="同一个档案 ID", questionId="stack", answer="静态 HTML + CSS")
 ```
 
-工作台刷新后会显示 `registered`、`dissected`、`specified`、`scaffolded`、`checked`、`packed` 六种进度。`guoluo_workbench` 与面板读取同一份数据，`view=overview` 看项目列表，`view=project` 看档案和最近批次，`view=evidence` 分页读证据。旧会话不会热加载新 client bundle，重启后再开新会话验收。
+工作台刷新后会显示 `registered`、`dissected`、`specified`、`scaffolded`、`checked`、`packed` 六种进度。`guoluo_workbench` 与面板读取同一份数据，`view=overview` 看项目列表，`view=project` 看档案和最近批次，`view=evidence` 分页读证据。旧会话不会热加载新 client bundle，也不会换成新注册的预设；重启后再开新会话验收。
 
 ## 开发
 

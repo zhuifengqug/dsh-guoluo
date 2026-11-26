@@ -62,6 +62,12 @@ try {
     '      config:',
     '        host: 127.0.0.1',
     '        port: 0',
+    // 宿主平面才有 agentPresets；隔离 profile 只装 dsh-base，所以要自己插这一行，
+    // 否则本插件的 preset 行只会停在「pending (waiting for service: agentPresets)」。
+    '    - id: agent-preset-registry',
+    "      name: '@deepseek-ai/dsh-agent-preset-registry'",
+    '      config:',
+    '        default: standard',
     '',
   ].join('\n'));
   await writeFile(join(sourceRoot, 'design.css'), ':root{--accent:#112233}');
@@ -72,7 +78,14 @@ try {
   const desc = settings.describe().find(row => row.ns === 'guoluo');
   assert.equal(desc?.autoGenerate, true);
   const tools = ctx.get('tools');
-  assert.deepEqual(tools.schemas().map(tool => tool.name).filter(name => name.startsWith('guoluo_')).sort(), ['guoluo_brief', 'guoluo_check', 'guoluo_dissect', 'guoluo_dossier', 'guoluo_export', 'guoluo_list', 'guoluo_mock', 'guoluo_probe', 'guoluo_run', 'guoluo_scaffold', 'guoluo_spec', 'guoluo_status', 'guoluo_target_add', 'guoluo_tokens', 'guoluo_workbench']);
+  assert.deepEqual(tools.schemas().map(tool => tool.name).filter(name => name.startsWith('guoluo_')).sort(), ['guoluo_answer', 'guoluo_brief', 'guoluo_check', 'guoluo_dissect', 'guoluo_dossier', 'guoluo_export', 'guoluo_list', 'guoluo_mock', 'guoluo_probe', 'guoluo_questions', 'guoluo_report', 'guoluo_run', 'guoluo_scaffold', 'guoluo_spec', 'guoluo_status', 'guoluo_target_add', 'guoluo_tokens', 'guoluo_workbench']);
+  // 预设是 bundle patch 里的一行：它必须真的注册进 roster，且没有 broken 诊断。
+  const presets = ctx.get('agentPresets');
+  assert.ok(presets, '宿主没有 agentPresets 服务，预设这一行只会停在 pending');
+  const presetRow = (await presets.list()).find(row => row.id === 'guoluo-rebuild');
+  assert.ok(presetRow, 'roster 上没有 guoluo-rebuild');
+  assert.equal(presetRow.broken, undefined, `预设挂载失败：${presetRow.broken}`);
+  assert.equal(presetRow.name, '复刻工坊');
   const call = (suffix, args) => tools.get(`guoluo_${suffix}`).execute(args, { signal: AbortSignal.timeout(15000) });
   assert.equal((await call('probe', {})).directories.ready, false);
   await settings.update('guoluo', { sourceRoot, archiveRoot }, desc.revision);
@@ -186,6 +199,24 @@ try {
   const projectRes = await fetch(`${origin}/api/guoluo/project?id=${siteId}`);
   assert.equal(projectRes.status, 200);
   assert.equal((await projectRes.json()).project.stage, 'packed');
+  // 预设工作流的后两步：集中提问 → 落一个答案 → 写逆向报告。三样都只写档案根。
+  const asked = await call('questions', { id: siteId, runId: siteRun.runId });
+  assert.equal(asked.file, join(archiveRoot, siteId, 'questions.json'));
+  assert.deepEqual(asked.questions.map(entry => entry.key), ['stack', 'name']);
+  assert.equal(asked.open, 2);
+  const answered = await call('answer', { id: siteId, questionId: 'stack', answer: '静态 HTML + CSS' });
+  assert.equal(answered.answered, 1);
+  assert.deepEqual(answered.open, ['name']);
+  const reported = await call('report', { id: siteId, runId: siteRun.runId });
+  assert.equal(reported.file, join(archiveRoot, siteId, 'report.md'));
+  assert.equal(reported.open, 1);
+  const reportBody = await readFile(reported.file, 'utf8');
+  assert.match(reportBody, /^# 逆向报告 · site/mu);
+  assert.match(reportBody, /## 7 访谈（已答 1 \/ 共 2）/u);
+  assert.match(reportBody, /## 8 复刻路线与当前状态/u);
+  assert.match(reportBody, /目标程序没有运行/u);
+  const askedAgain = await call('questions', { id: siteId, runId: siteRun.runId });
+  assert.equal(askedAgain.answered, 1, '同批次重新生成要沿用答案');
   await copyFile(new URL('./fixtures/godot-4.7.2-empty.pck', import.meta.url), join(sourceRoot, 'sample.pck'));
   const { id: pckId } = await call('target_add', { kind: 'local', location: 'sample.pck' });
   const pck = await call('dissect', { id: pckId });
@@ -389,7 +420,7 @@ try {
     }
     return { status: measured.visual.status, routes: measured.visual.routeCount, scores: summary.routes.map(route => route.score) };
   })() : null;
-  console.log(JSON.stringify({ result: 'passed', version: probe.pluginVersion, visual, tools: 15, workbench: { status: wbOverview.status, stage: wbProject.project.stage, route: overviewBody.service }, skill: skill.name, command: command.name, liveSettings: true, rea: probe.rea, linkedRea: siteRun.rea.binding.status, derived: { spec: spec.obligations, brief: brief.bytes > 0, tokens: tokens.total, exported: exported.count, mock: mocked.routes, check: checked.verdict, candidate: covered.candidate.verdict, scaffold: scaffolded.counts.copied, structure: closed.candidate.structure.comparedPages, report: closed.candidate.report ? 1 : 0, run: packed.steps.length }, pck: pck.pck.counts.entries, unity: unityDetails.rows[0].blocksInfo.compression, unityV9, il2cpp: il2cppRow.counts.types }));
+  console.log(JSON.stringify({ result: 'passed', version: probe.pluginVersion, visual, tools: 18, preset: presetRow.id, workbench: { status: wbOverview.status, stage: wbProject.project.stage, route: overviewBody.service }, skill: skill.name, command: command.name, liveSettings: true, rea: probe.rea, linkedRea: siteRun.rea.binding.status, derived: { spec: spec.obligations, brief: brief.bytes > 0, tokens: tokens.total, exported: exported.count, mock: mocked.routes, check: checked.verdict, candidate: covered.candidate.verdict, scaffold: scaffolded.counts.copied, structure: closed.candidate.structure.comparedPages, report: closed.candidate.report ? 1 : 0, run: packed.steps.length }, pck: pck.pck.counts.entries, unity: unityDetails.rows[0].blocksInfo.compression, unityV9, il2cpp: il2cppRow.counts.types }));
 } finally {
   await ctx?.fiber.dispose();
   await rm(root, { recursive: true, force: true });

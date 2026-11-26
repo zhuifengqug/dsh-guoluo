@@ -1,3 +1,141 @@
+# 蜾蠃的两个声明：工作台的插件行，和一个「随点随拆」的 Agent 预设。
+#
+# 预设这一行是给 G 用的入口：在模式下拉里选「复刻工坊」，说一句「逆向复刻这个
+# 应用：<路径>」就开始，不需要记住 18 个工具的顺序。预设只贡献 persona 与
+# 工具行；guoluo_* 工具本身由本 bundle 在宿主平面注册，预设会话照常可见。
 - insert:
     - id: guoluo
       name: '@zhuifengqug/dsh-guoluo'
+
+    - id: preset-guoluo-rebuild
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: guoluo-rebuild
+        name: 复刻工坊
+        description: 指一个应用就开拆：静态盘点成可追溯证据，写成逆向报告与复刻规格，一次问清要你拍板的事，再把成效能核对的候选工程。只读素材、不执行目标程序。
+        order: 20
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: |
+                你是「复刻工坊」的技工：用户指一个应用，你把它的资产拆成证据，写成可验收的复刻规格，再在他自己的项目里重建出来。你的判断靠证据，不靠印象。
+
+                ## 用户点一个目标就直接开工
+                用户说「逆向复刻这个应用：<路径 / 安装包 / 包名 / 网址>」时，不要反问流程、不要先讲方法论，按这条链走：
+                1. `guoluo_probe` 看素材根、档案根与 REA 是否可用。缺哪一项，一次说清要什么，停在那里等他补，不要拿默认路径硬跑。
+                2. `guoluo_target_add` 登记目标（本地目录用 `kind:'local'`，网址只登记不联网抓取）。
+                3. `guoluo_run` 用一条命令跑完盘点→规格→交接单→令牌→导出→骨架→核对→复刻包，然后把 `<id>/pack/<批次>/INDEX.md` 的结论与缺口读给他听。
+                4. `guoluo_report` 写逆向报告，`guoluo_questions` 生成要拍板的问题清单，**一次问清**：每条带上你的建议和依据，不要一条一条挤牙膏。
+                5. 他答完用 `guoluo_answer` 落盘；需要重跑就用新批次，绝不覆盖旧批次。
+
+                用户只报了个名字、没说路径时，先 `guoluo_list` 看有没有现成档案；没有就问他一句要路径还是安装包，问完继续，不要反复确认。
+
+                ## 三层分账（这条最要紧）
+                - **证据**：`guoluo_dossier` 能查回来的行——路径、字节、指纹、声明、头信息。可以当事实说。
+                - **推断**：从证据算出来的判断（技术栈、阶段、下一步）。说的时候把依据一起说，例如「有 0 个页面、有 1705 张图，所以判断是打包型应用」。
+                - **缺口**：静态解析够不到的东西（原生二进制、运行时行为、接口与数据流）。照实记成缺口，不要用推测填平。
+
+                ## 硬规矩
+                - 只读素材：不执行目标程序，不改素材根，不跟随符号链接；所有产物只写档案根。
+                - 静态证据不等于复刻。`guoluo_check` 的 `complete` 只说明文件与结构对得上，不要说成「目标已被复刻」。
+                - 一个批次一份证据、一个复刻包目录，绝不覆盖历史；重跑就是新批次。
+                - 用户没答的问题不许替他答；能用证据自己定的问题不要问。
+                - 报告与回执里出现数字时，用工具回执里的真实数字，不要写「若干」「大量」。
+
+          - id: agent-instructions
+            name: '@deepseek-ai/dsh-agent-instructions'
+            config:
+              maxBytes: 65536
+          - id: time-context
+            name: '@deepseek-ai/dsh-time-context'
+          - id: tool-bash
+            name: '@deepseek-ai/dsh-tool-bash'
+            disabled: !!js process.platform === 'win32'
+          - id: tool-pwsh
+            name: '@deepseek-ai/dsh-tool-pwsh'
+            disabled: !!js process.platform !== 'win32'
+          - id: tool-fs
+            name: '@deepseek-ai/dsh-tool-fs'
+            config:
+              applyPatch: false
+          - id: tool-fs-search
+            name: '@deepseek-ai/dsh-tool-fs-search'
+            config:
+              sampleOverCapGlobResults: false
+          - id: tool-jobs
+            name: '@deepseek-ai/dsh-tool-jobs'
+          - id: skill-filesystem
+            name: '@deepseek-ai/dsh-skill-filesystem'
+            config:
+              customSkillDirs:
+                - !!js process.getBuiltinModule('node:path').join(process.getBuiltinModule('node:path').dirname(process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('@deepseek-ai/dsh-agent-preset/package.json')), 'skills')
+          - id: tool-skill
+            name: '@deepseek-ai/dsh-tool-skill'
+          - id: command-goal
+            name: '@deepseek-ai/dsh-command-goal'
+          - id: tool-goal
+            name: '@deepseek-ai/dsh-tool-goal'
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate:
+              compaction: true
+              toolResultPruner: true
+            config:
+              - id: compaction-basic
+                name: '@deepseek-ai/dsh-compaction-basic'
+              - id: command-compact
+                name: '@deepseek-ai/dsh-command-compact'
+              - id: tool-result-pruner
+                name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+                config:
+                  thresholdChars: 8192
+                  headChars: 4096
+                  tailChars: 1024
+          - id: delegation
+            name: cordis:group
+            group: true
+            isolate:
+              workflowEngine: true
+            config:
+              - id: tool-subagent-control
+                name: '@deepseek-ai/dsh-tool-subagent-control'
+                config:
+                  interrupt: false
+              - id: tool-subagent
+                name: '@deepseek-ai/dsh-tool-subagent'
+                config:
+                  provider: spawn
+                  toolName: subagent
+                  modelSelection: true
+                  modelDiscovery: true
+              - id: tool-subagent-fork
+                name: '@deepseek-ai/dsh-tool-subagent'
+                config:
+                  provider: fork
+                  toolName: subagent_fork
+              - id: workflow-ptc
+                name: '@deepseek-ai/dsh-workflow-ptc'
+                config:
+                  provider: spawn
+              - id: tool-workflow
+                name: '@deepseek-ai/dsh-tool-workflow'
+          - id: tool-ask-user
+            name: '@deepseek-ai/dsh-tool-ask-user'
+          - id: tool-todo
+            name: '@deepseek-ai/dsh-tool-todo'
+            config:
+              allowParallelInProgress: true
+          - id: tool-web
+            name: '@deepseek-ai/dsh-tool-web'
+            config:
+              fetch: true
+              searchTimeoutMs: 60000
+          - id: present
+            name: '@deepseek-ai/dsh-tool-present'
+          - id: tool-office
+            name: '@deepseek-ai/dsh-tool-office'
+          - id: tool-plugin-manager
+            name: '@deepseek-ai/dsh-plugin-manager/tools'
+            disabled: !!js "!ctx.get('profileContext')"
