@@ -6,15 +6,18 @@ DSH 0.2.2-rc.5 的本地应用资产档案插件。把静态素材整理成可�
 
 在插件设置中填写两个**已存在、互不包含**的绝对目录：`sourceRoot`（素材根）和 `archiveRoot`（档案根）。`reaPath` 可留空从 `PATH` 找，用于探测 REA 版本并调用 `analyze-javascript-application` 与截图/比对命令；适配普通可执行文件、Node `.mjs` 和符合固定格式的 Windows Node 启动器。REA 未装也能盘点静态素材，只是没有行为侧证据。`reaTimeoutMs` 控制单次分析超时，默认 180000 毫秒。`chromiumPath` 可选，留空时使用已安装的 Google Chrome（缺失时回退到 Microsoft Edge）；视觉核对需要本机有 Chrome 或 Edge，`playwright-core` 不自带浏览器。
 
-1. `/guoluo probe` 检查配置与 REA CLI。
-2. `guoluo_target_add` 登记 `{ "kind": "local", "location": "my-export" }`。位置相对于素材根；目录、单个 HTML/CSS、Electron `.asar`、Android `.apk`、Godot `.pck`、Windows `.exe`/`.dll`，以及 Unity 的 `global-metadata.dat` 或 `.bundle`/`.unity3d` 都可以。
-3. `guoluo_dissect` 传档案 `id`，返回批次 `runId`、证据数量、覆盖说明、耗时与 REA 绑定结果。目录型素材会自动调用 REA 分析并把摘要绑定到本次素材的路径与根哈希；传 `"rea": false` 可跳过，`reaTimeoutMs` 可覆盖超时。APK、PCK、PE 与 Unity 素材只做静态解析，不触发 REA。
-4. `guoluo_dossier` 传 `id`，可选固定 `runId`、`kind`、`offset`、`limit`。通过 `nextOffset` 翻页。`kind: binary` 分页读 PE 与 Unity 逐文件明细；`kind: apk-permission` 与 `kind: apk-activity` 分页读 APK 清单里已落盘的权限与活动，旧批次只存首页时回执 `stale: true`，需要重新盘点才能看到后段。`kind: pe-imports` 与 `kind: pe-exports` 回到登记的 PE 源文件现解析，按 `offset`/`limit` 分页读完整导入符号与命名导出（几千条也可翻完；同一档案登记多个 PE 时用 `path` 指明，`path` 是相对登记位置的路径）。`kind: il2cpp-types` 与 `kind: il2cpp-fields` 回到登记的 `global-metadata.dat` 现解析，按 `offset`/`limit` 分页读类型名（含命名空间、声明类型、字段/方法计数）与字段名（含类型索引、声明类型与 token）；只对已核对布局的版本生效，未核对版本回 `status: unverified` 与原因，多个元数据文件时用 `path` 指明。这类符号页的 `total` 是本次可翻阅的条数、`nextOffset` 为 `null` 即读完、`source: current-file` 表示符号来自当前源文件而不是历史快照，`namedCount` 给出导出表声明的总数；读取预算用尽时 `status: partial` 且 `incomplete: true`，`note` 明确「翻页结束不代表读完整张表」。证据行总量 512 KiB 的 `clipped` 只作用于 `binary`/`apk-*` 这类落盘证据页；一条证据始终完整返回，单条超出预算时独占一页。所有分页每次最多 50 条。
-5. `guoluo_spec`、`guoluo_tokens`、`guoluo_export` 把一批证据转成派生产物，默认取最新批次。
-6. `guoluo_brief` 传 `id` 与必填的 `runId`，把这一批证据写成复刻交接单：先做哪些 HTML 入口、参考哪些素材与令牌、哪些声明有待确认、按什么顺序验收。它只写档案里的 `brief/<runId>.md`，不启动子代理、不落地工程（要静态工程骨架用 `guoluo_scaffold`）。不能省略 `runId`——派生产物按批次固定，避免交接单悄悄换了依据。
-7. `guoluo_check` 核对证据自洽性。传 `candidate: { "directory": "my-rebuild" }` 按规格核对候选工程目录里的素材、页面与令牌是否对得上，并在同一回执里给出页面结构比对（选择器、链接目标、标签层级），同时把结构缺口写成同目录的 `check-<ts>-<uuid>.md` 核对报告。传 `visual: { "candidateDirectory": "my-rebuild" }` 可核对默认入口的渲染差异。多页核对通过 `visual.routes` 指定基准和候选的 HTML 文件，每页比较 390、768、1440 三档宽度，高度固定为 900。
-8. `guoluo_scaffold` 传 `id`，可选 `runId`、目录名 `name` 与三档复制预算 `files`/`fileBytes`/`totalBytes`（默认 512 个文件 / 单文件 8 MiB / 合计 64 MiB，上限 4096 / 32 MiB / 256 MiB），在档案的 `scaffold/<name>/` 下生成最小可运行静态工程：已盘点的页面、样式、图片、字体与音视频按素材根内相对路径逐字节复制并核对档案指纹，另加 `_scaffold/index.html` 路由索引、`tokens.css`/`tokens.tailwind.css` 与 `_scaffold/scaffold.json` 逐文件清单；生成后立刻按同一批规格做一次文件层覆盖核对并回执 `coverage`。只写档案根、只生成不启动、不执行素材脚本；同名目录已存在时拒绝覆盖。
-9. `/guoluo list` 列档案，`/guoluo status <id>` 看状态；也可用 `guoluo_list`、`guoluo_status`。
+先 `/guoluo probe` 检查配置与 REA CLI，然后可一条命令跑完整链，或按下面分步流程执行。
+
+想一条命令拿成品：登记之后调用 `guoluo_run`（`/guoluo run <id>`）。它按顺序跑盘点 → 规格 → 交接单 → 令牌 → 导出 → 静态骨架 → 核对，最后在档案的 `pack/<批次>/` 下写两份东西——`INDEX.md` 与 `pack.json`。每趟生成一个独立的批次目录，重跑不覆盖旧包，路径由回执的 `directory` 给出。`INDEX.md` 是给人读的入口：先说这批素材能不能开工，再按「先看什么」排好阅读顺序（规格 → 骨架说明 → 路由索引 → 交接单 → 结构缺口报告），然后是证据事实表、缺口与待确认、五步复刻路径与产物清单；`pack.json` 是同一份内容的机器读版本（每步状态、耗时、数量、产物路径）。已有批次传 `runId` 就直接沿用、不重新盘点；想同一趟把候选工程也核进去，附 `candidate: { "directory": "my-rebuild" }`。任何一步失败都会停下并报「第几步、哪一步、为什么」，暂存目录当场删掉，不会留下半截索引。单文件素材与 URL 登记不会生成骨架，`scaffold` 步骤记 `skipped` 并写明原因。下面 1–8 是同一串动作的分步执行方式。
+
+1. `guoluo_target_add` 登记 `{ "kind": "local", "location": "my-export" }`。位置相对于素材根；目录、单个 HTML/CSS、Electron `.asar`、Android `.apk`、Godot `.pck`、Windows `.exe`/`.dll`，以及 Unity 的 `global-metadata.dat` 或 `.bundle`/`.unity3d` 都可以。
+2. `guoluo_dissect` 传档案 `id`，返回批次 `runId`、证据数量、覆盖说明、耗时与 REA 绑定结果。目录型素材会自动调用 REA 分析并把摘要绑定到本次素材的路径与根哈希；传 `"rea": false` 可跳过，`reaTimeoutMs` 可覆盖超时。APK、PCK、PE 与 Unity 素材只做静态解析，不触发 REA。
+3. `guoluo_dossier` 传 `id`，可选固定 `runId`、`kind`、`offset`、`limit`。通过 `nextOffset` 翻页。`kind: binary` 分页读 PE 与 Unity 逐文件明细；`kind: apk-permission` 与 `kind: apk-activity` 分页读 APK 清单里已落盘的权限与活动，旧批次只存首页时回执 `stale: true`，需要重新盘点才能看到后段。`kind: pe-imports` 与 `kind: pe-exports` 回到登记的 PE 源文件现解析，按 `offset`/`limit` 分页读完整导入符号与命名导出（几千条也可翻完；同一档案登记多个 PE 时用 `path` 指明，`path` 是相对登记位置的路径）。`kind: il2cpp-types` 与 `kind: il2cpp-fields` 回到登记的 `global-metadata.dat` 现解析，按 `offset`/`limit` 分页读类型名（含命名空间、声明类型、字段/方法计数）与字段名（含类型索引、声明类型与 token）；只对已核对布局的版本生效，未核对版本回 `status: unverified` 与原因，多个元数据文件时用 `path` 指明。这类符号页的 `total` 是本次可翻阅的条数、`nextOffset` 为 `null` 即读完、`source: current-file` 表示符号来自当前源文件而不是历史快照，`namedCount` 给出导出表声明的总数；读取预算用尽时 `status: partial` 且 `incomplete: true`，`note` 明确「翻页结束不代表读完整张表」。证据行总量 512 KiB 的 `clipped` 只作用于 `binary`/`apk-*` 这类落盘证据页；一条证据始终完整返回，单条超出预算时独占一页。所有分页每次最多 50 条。
+4. `guoluo_spec`、`guoluo_tokens`、`guoluo_export` 把一批证据转成派生产物，默认取最新批次。
+5. `guoluo_brief` 传 `id` 与必填的 `runId`，把这一批证据写成复刻交接单：先做哪些 HTML 入口、参考哪些素材与令牌、哪些声明有待确认、按什么顺序验收。它只写档案里的 `brief/<runId>.md`，不启动子代理、不落地工程（要静态工程骨架用 `guoluo_scaffold`）。不能省略 `runId`——派生产物按批次固定，避免交接单悄悄换了依据。
+6. `guoluo_check` 核对证据自洽性。传 `candidate: { "directory": "my-rebuild" }` 按规格核对候选工程目录里的素材、页面与令牌是否对得上，并在同一回执里给出页面结构比对（选择器、链接目标、标签层级），同时把结构缺口写成同目录的 `check-<ts>-<uuid>.md` 核对报告。传 `visual: { "candidateDirectory": "my-rebuild" }` 可核对默认入口的渲染差异。多页核对通过 `visual.routes` 指定基准和候选的 HTML 文件，每页比较 390、768、1440 三档宽度，高度固定为 900。
+7. `guoluo_scaffold` 传 `id`，可选 `runId`、目录名 `name` 与三档复制预算 `files`/`fileBytes`/`totalBytes`（默认 512 个文件 / 单文件 8 MiB / 合计 64 MiB，上限 4096 / 32 MiB / 256 MiB），在档案的 `scaffold/<name>/` 下生成最小可运行静态工程：已盘点的页面、样式、图片、字体与音视频按素材根内相对路径逐字节复制并核对档案指纹，另加 `_scaffold/index.html` 路由索引、`tokens.css`/`tokens.tailwind.css` 与 `_scaffold/scaffold.json` 逐文件清单；生成后立刻按同一批规格做一次文件层覆盖核对并回执 `coverage`。只写档案根、只生成不启动、不执行素材脚本；同名目录已存在时拒绝覆盖。
+8. `/guoluo list` 列档案，`/guoluo status <id>` 看状态；也可用 `guoluo_list`、`guoluo_status`。
 
 随包提供 `guoluo-rebuild` 技能。档案索引和独立批次保存在档案根的 `<id>/target.json` 与 `<id>/runs/<runId>.json`。请使用单独的归档目录；不要在盘点时改动、移动或替换素材目录与档案目录中的条目。
 
@@ -31,8 +34,11 @@ DSH 0.2.2-rc.5 的本地应用资产档案插件。把静态素材整理成可�
 | `guoluo_mock` | `<id>/mock/mock.json`、`server.mjs` | 零依赖回放服务：静态链接回占位页，素材按素材根发原始字节，其余 404 |
 | `guoluo_scaffold` | `<id>/scaffold/<name>/` 下的素材副本、`_scaffold/{index.html,tokens.css,tokens.tailwind.css,scaffold.json}`、`README.md` | 最小可运行静态工程：素材逐字节复制并核指纹，另生成路由索引、令牌表与逐文件清单；生成后即做文件层覆盖核对 |
 | `guoluo_check` | `<id>/checks/check-<ts>-<uuid>.json` | 覆盖度核对：漏项、悬空证据、与已落盘规格的批次偏差；可选候选工程覆盖度（文件层 + 页面结构层）与视觉比对 |
+| `guoluo_run` | `<id>/pack/<批次>/INDEX.md`、`pack.json` | 一条命令串完整链后的入口：人读索引（结论、阅读顺序、证据事实、缺口、五步复刻路径、产物清单）与机器读汇总（每步状态与产物路径）；每趟一个独立批次目录，重跑不覆盖旧包 |
 | `guoluo_check`（结构报告） | `<id>/checks/check-<ts>-<uuid>.md` | 候选结构缺口报告：按证据页分组列出缺的选择器、链接目标、标签数量与深度分布，并单列未核页、缺页与候选多出的页 |
 | `guoluo_check`（视觉） | `<id>/checks/check-<ts>-<uuid>/` 下的 `summary.json`、`r<n>-<w>-{before,after}.{artifact.json,png}`、`r<n>-<w>-diff.json` | 逐路由、逐视口的核对结果与截图证据 |
+
+`run` 只是编排：它按顺序调用上面这些工具，产物位置与分步执行完全一致，`pack/<批次>/` 里没有新事实——只有索引与汇总。每趟生成一个独立批次目录：写到一半失败或取消时暂存目录当场删除，已经写好的旧包原样保留；删掉某个包目录也不会损失别的产物。它不会把候选工程塞进素材根，也不会跳过任何一步的失败：出错即停，报「第几步、哪一步、为什么」。
 
 `spec` 不是设计文档生成器：它把已有证据翻译成"必须复刻什么"，每条都能回查到文件与行号。证据没覆盖的东西一律进 `unknowns`，不补写、不推测。
 

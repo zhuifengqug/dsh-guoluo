@@ -60,18 +60,34 @@ export function apply(ctx, config = {}) {
     }, required: ['candidateDirectory'], additionalProperties: false },
     candidate: { type: 'object', properties: { directory: string(500) }, required: ['directory'], additionalProperties: false },
   }, ['id'], projects.check, checkTimeoutMs);
+  add('run', '一条命令跑完整链：盘点（或沿用指定 runId 的批次）→ 规格 → 交接单 → 令牌 → 导出 → 静态骨架 → 核对，最后在档案的 pack/<批次>/ 目录写 INDEX.md（人读顺序：先看什么、哪些缺口、怎么复刻）与 pack.json（步骤状态、数量、产物路径）。每趟生成一个独立批次目录，重跑不覆盖旧包；中途失败会停在出错的步骤上并报第几步、哪一步、原因，暂存目录当场删除。骨架预算可用 files/fileBytes/totalBytes 调高；给出 candidate 时同一趟把候选工程也核一遍。', {
+    id, runId: string(50), rea: { type: 'boolean' }, reaTimeoutMs: { type: 'integer', minimum: 10000, maximum: 1800000 },
+    name: string(80),
+    files: { type: 'integer', minimum: 1, maximum: 4096 },
+    fileBytes: { type: 'integer', minimum: 1, maximum: 32 * 1024 * 1024 },
+    totalBytes: { type: 'integer', minimum: 1, maximum: 256 * 1024 * 1024 },
+    candidate: { type: 'object', properties: { directory: string(500) }, required: ['directory'], additionalProperties: false },
+    visual: { type: 'object', properties: {
+      candidateDirectory: string(500), baselineEntry: string(500), candidateEntry: string(500),
+      routes: { type: 'array', minItems: 1, maxItems: 16, items: { type: 'object', properties: {
+        baselineEntry: string(500), candidateEntry: string(500),
+      }, additionalProperties: false } },
+      channelThreshold: { type: 'integer', minimum: 0, maximum: 255 },
+    }, required: ['candidateDirectory'], additionalProperties: false },
+  }, ['id'], projects.run, 2400000);
   add('list', '列出已登记的蜾蠃档案。', { offset, limit }, [], projects.list);
   add('status', '查看某个档案最近的盘点和批次数。', { id }, ['id'], projects.status);
   const skill = readFileSync(new URL('./skills/guoluo-rebuild/SKILL.md', import.meta.url), 'utf8');
   const body = skill.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/u, '');
   ctx.effect(() => ctx.skills.register({ name: 'guoluo-rebuild', description: summary, content: body, source: 'runtime', provider: name }));
   ctx.effect(() => ctx.commands.register({
-    name, description: '蜾蠃：检查配置、列档案、导出交接单、生成 mock 与工程骨架、核对覆盖度', input: { hint: 'probe | list | status <id> | spec <id> | brief <id> <runId> | tokens <id> | export <id> [json|markdown|csv] | mock <id> | scaffold <id> [runId|目录名] | check <id>' }, recordInput: false,
+    name, description: '蜾蠃：一条命令跑完整链，或单步检查配置、列档案、导出交接单、生成 mock 与工程骨架、核对覆盖度', input: { hint: 'run <id> | probe | list | status <id> | spec <id> | brief <id> <runId> | tokens <id> | export <id> [json|markdown|csv] | mock <id> | scaffold <id> [runId|目录名] | check <id>' }, recordInput: false,
     async handler({ rawInput, signal }) {
       const [verb, target, format, ...rest] = (rawInput ?? '').trim().split(/\s+/u);
       try {
         let result;
-        if (verb === 'probe' && !target) result = await projects.probe(signal);
+        if (verb === 'run' && target && !rest.length) result = await projects.run({ id: target, ...(format ? { name: format } : {}) }, signal);
+        else if (verb === 'probe' && !target) result = await projects.probe(signal);
         else if (verb === 'list' && !target) result = await projects.list({}, signal);
         else if (verb === 'status' && target && !format && !rest.length) result = await projects.status({ id: target }, signal);
         else if (verb === 'spec' && target && !format && !rest.length) result = await projects.spec({ id: target }, signal);
@@ -81,7 +97,7 @@ export function apply(ctx, config = {}) {
         else if (verb === 'mock' && target && !rest.length) result = await projects.mock({ id: target, ...(format ? { port: Number(format) } : {}) }, signal);
         else if (verb === 'scaffold' && target && !rest.length) result = await projects.scaffold({ id: target, ...(format ? { name: format } : {}) }, signal);
         else if (verb === 'check' && target && !format && !rest.length) result = await projects.check({ id: target }, signal);
-        else return { kind: verb ? 'error' : 'success', text: '蜾蠃 · /guoluo probe | list | status <id> | spec <id> | brief <id> <runId> | tokens <id> | export <id> [json|markdown|csv] | mock <id> [port] | scaffold <id> [runId|目录名] | check <id>。登记和盘点请用 guoluo_target_add、guoluo_dissect。' };
+        else return { kind: verb ? 'error' : 'success', text: '蜾蠃 · /guoluo run <id> | probe | list | status <id> | spec <id> | brief <id> <runId> | tokens <id> | export <id> [json|markdown|csv] | mock <id> [port] | scaffold <id> [runId|目录名] | check <id>。登记和盘点请用 guoluo_target_add、guoluo_dissect。' };
         return { kind: 'success', text: JSON.stringify(result, null, 2) };
       } catch (error) {
         signal?.throwIfAborted();

@@ -5,6 +5,8 @@ description: 使用蜾蠃整理经过导出或准备好的 HTML、CSS、素材�
 
 # 蜾蠃：素材 → 档案 → 复刻义务
 
+0. 想一条命令拿到能开工的复刻包，用 `guoluo_run`：登记之后一次跑完盘点 → 规格 → 交接单 → 令牌 → 导出 → 骨架 → 核对，并在 `<id>/pack/<批次>/` 落 `INDEX.md`（先看什么、哪些缺口、怎么复刻）与 `pack.json`（步骤状态、数量、产物路径），路径以回执的 `directory` 为准——每趟一个独立批次目录，重跑不覆盖旧包。已有批次就传 `runId` 直接沿用，不重新盘点；想同一趟连候选工程一起核，附 `candidate: { directory }`。中途失败会报「第几步、哪一步、为什么」且暂存目录当场删除——看到这种错误就修那一步再重跑，不要拿上一次的旧包当结论。分步执行的细节见下面 1–11。
+
 1. 调用 `guoluo_probe` 检查素材根和档案根。REA 未装不影响本地静态盘点。
 2. 用 `guoluo_target_add` 登记素材根内相对路径，`kind` 选 `local`；目录、单个 HTML/CSS、Electron `.asar`、Android `.apk`、Godot `.pck`、Windows `.exe`/`.dll`，或 Unity 的 `global-metadata.dat`、`.bundle`/`.unity3d` 都可登记。`kind: url` 只记录出处，不触发采集；已有的本地导出件单独登记。
 3. 用 `guoluo_dissect` 返回批次 ID、数量、范围、耗时与 REA 绑定结果。扩展名不在识别表里的文件不会被丢掉：它们以 `type: other` 登记路径、字节数与扩展名，并在单文件 32 MiB、合计 256 MiB 的指纹预算内算 SHA-256，`coverage.untyped` 与 `notes` 说明这批只是文件级证据。目录型素材会自动调用 REA 分析并把摘要绑定到本次素材的路径与根哈希；`rea.status` 为 `analyzed` 且 `rea.binding.status` 为 `verified` 才能采信行为侧证据，`mismatch` 视为无行为侧证据，需要重新采集。单文件、ASAR、APK、PCK、PE、Unity 与 URL 档案不会触发 REA；APK 只按 ZIP 中央目录与二进制清单静态解析（包名、版本、SDK、权限、入口 Activity、ABI），不解压资源、不校验签名；PCK 只读包头与文件表（引擎版本、条目、加密标记、场景/脚本/资源计数），不解压条目、不解密、不运行游戏；PE 只解析头部、节表、导入导出表与 CLR 标记，不反编译、不运行二进制；Unity 盘点 `UnityFS` 头、块信息段与数据区（未压缩、LZ4/LZ4HC 或 LZMA 压缩）、节点表，并把可解压的数据区按块解压后按节点切出大小、SHA-256、类型魔数与 24 字节前缀（只记指纹、不留内容；数据区最多读 64 MiB、解压后最多 256 MiB、最多列 32 个节点，`payload.status` 为 `parsed`/`skipped`/`failed`），IL2CPP 元数据只对已核对布局的版本（v24）读区段表、类型名与字段名，其余版本只报 `metadataVersion` 与 `declaredHeaderBytes` 并标 `status: unverified`；方法体、字段类型签名与运行时行为始终不展开。`UnityFS` v9 以块表存储偏移取块（相对 `dataStart`，不同于节点的解压后逻辑偏移）；v10 及以上只保留头部事实。LZHAM 压缩明确不支持。

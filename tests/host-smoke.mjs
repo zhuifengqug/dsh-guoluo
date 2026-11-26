@@ -63,7 +63,7 @@ try {
   const desc = settings.describe().find(row => row.ns === 'guoluo');
   assert.equal(desc?.autoGenerate, true);
   const tools = ctx.get('tools');
-  assert.deepEqual(tools.schemas().map(tool => tool.name).filter(name => name.startsWith('guoluo_')).sort(), ['guoluo_brief', 'guoluo_check', 'guoluo_dissect', 'guoluo_dossier', 'guoluo_export', 'guoluo_list', 'guoluo_mock', 'guoluo_probe', 'guoluo_scaffold', 'guoluo_spec', 'guoluo_status', 'guoluo_target_add', 'guoluo_tokens']);
+  assert.deepEqual(tools.schemas().map(tool => tool.name).filter(name => name.startsWith('guoluo_')).sort(), ['guoluo_brief', 'guoluo_check', 'guoluo_dissect', 'guoluo_dossier', 'guoluo_export', 'guoluo_list', 'guoluo_mock', 'guoluo_probe', 'guoluo_run', 'guoluo_scaffold', 'guoluo_spec', 'guoluo_status', 'guoluo_target_add', 'guoluo_tokens']);
   const call = (suffix, args) => tools.get(`guoluo_${suffix}`).execute(args, { signal: AbortSignal.timeout(15000) });
   assert.equal((await call('probe', {})).directories.ready, false);
   await settings.update('guoluo', { sourceRoot, archiveRoot }, desc.revision);
@@ -130,6 +130,22 @@ try {
   assert.deepEqual(scaffoldManifest.files.map(file => file.origin).sort(), ['copied', 'copied', 'generated', 'generated', 'generated', 'generated']);
   assert.equal(scaffoldManifest.files.find(file => file.path === 'app.css').integrity, 'match');
   assert.equal(await readFile(join(archiveRoot, scaffolded.directory, 'app.css'), 'utf8'), ':root{--accent:#112233}');
+  // 一条命令跑完整链：沿用同一批证据，索引要落到 pack/ 且列出全部八步。
+  const packed = await call('run', { id: siteId, runId: siteRun.runId, name: 'site-pack' });
+  assert.match(packed.directory, /^[0-9a-f-]{36}\/pack\/\d{13}-[0-9a-f-]{36}$/u);
+  assert.equal(packed.files.index, `${packed.directory}/INDEX.md`);
+  assert.deepEqual(packed.steps.map(step => step.name), ['dissect', 'spec', 'brief', 'tokens', 'export', 'scaffold', 'check', 'pack']);
+  assert.equal(packed.steps[0].status, 'reused');
+  assert.ok(packed.steps.every(step => step.status === 'ok' || step.status === 'reused'));
+  assert.equal(packed.check.verdict, 'complete');
+  const packIndex = await readFile(join(archiveRoot, packed.directory, 'INDEX.md'), 'utf8');
+  assert.match(packIndex, /^# 复刻包：/mu);
+  assert.match(packIndex, /## 先看什么（按这个顺序）/u);
+  assert.match(packIndex, /## 缺口与待确认/u);
+  assert.match(packIndex, /\.\.\/\.\.\/spec\/spec\.md/u);
+  const packSummary = JSON.parse(await readFile(join(archiveRoot, packed.directory, 'pack.json'), 'utf8'));
+  assert.equal(packSummary.runId, siteRun.runId);
+  assert.equal(packSummary.steps.length, 8);
   await copyFile(new URL('./fixtures/godot-4.7.2-empty.pck', import.meta.url), join(sourceRoot, 'sample.pck'));
   const { id: pckId } = await call('target_add', { kind: 'local', location: 'sample.pck' });
   const pck = await call('dissect', { id: pckId });
@@ -333,7 +349,7 @@ try {
     }
     return { status: measured.visual.status, routes: measured.visual.routeCount, scores: summary.routes.map(route => route.score) };
   })() : null;
-  console.log(JSON.stringify({ result: 'passed', version: probe.pluginVersion, visual, tools: 13, skill: skill.name, command: command.name, liveSettings: true, rea: probe.rea, linkedRea: siteRun.rea.binding.status, derived: { spec: spec.obligations, brief: brief.bytes > 0, tokens: tokens.total, exported: exported.count, mock: mocked.routes, check: checked.verdict, candidate: covered.candidate.verdict, scaffold: scaffolded.counts.copied, structure: closed.candidate.structure.comparedPages, report: closed.candidate.report ? 1 : 0 }, pck: pck.pck.counts.entries, unity: unityDetails.rows[0].blocksInfo.compression, unityV9, il2cpp: il2cppRow.counts.types }));
+  console.log(JSON.stringify({ result: 'passed', version: probe.pluginVersion, visual, tools: 14, skill: skill.name, command: command.name, liveSettings: true, rea: probe.rea, linkedRea: siteRun.rea.binding.status, derived: { spec: spec.obligations, brief: brief.bytes > 0, tokens: tokens.total, exported: exported.count, mock: mocked.routes, check: checked.verdict, candidate: covered.candidate.verdict, scaffold: scaffolded.counts.copied, structure: closed.candidate.structure.comparedPages, report: closed.candidate.report ? 1 : 0, run: packed.steps.length }, pck: pck.pck.counts.entries, unity: unityDetails.rows[0].blocksInfo.compression, unityV9, il2cpp: il2cppRow.counts.types }));
 } finally {
   await ctx?.fiber.dispose();
   await rm(root, { recursive: true, force: true });
